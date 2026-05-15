@@ -1,0 +1,86 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: bidmaster
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    ports:
+      - "8000:8000"
+    environment:
+      BMP_DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/bidmaster
+      BMP_REDIS_URL: redis://redis:6379/0
+      BMP_LLM_API_KEY: ${LLM_API_KEY:-}
+      BMP_LLM_API_BASE: ${LLM_API_BASE:-https://api.deepseek.com}
+      BMP_LLM_DEFAULT_MODEL: ${LLM_MODEL:-deepseek/deepseek-chat}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./projects:/app/projects
+      - ./chroma_db:/app/chroma_db
+      - ./skills:/app/skills
+      - ./templates:/app/templates
+
+  celery-worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    command: celery -A services.celery_app worker --loglevel=info
+    environment:
+      BMP_DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/bidmaster
+      BMP_REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./projects:/app/projects
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:
