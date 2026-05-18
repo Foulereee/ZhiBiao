@@ -3,7 +3,6 @@ from __future__ import annotations
 import enum
 import sqlalchemy as sql
 from sqlalchemy import Column, String, Integer, Float, Boolean, Text, DateTime, ForeignKey, Enum, JSON
-from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import DeclarativeBase, relationship
 from datetime import datetime
 import uuid
@@ -63,13 +62,17 @@ class UserRole(str, enum.Enum):
     REVIEWER = "reviewer"
 
 
+def _uuid_default():
+    return str(uuid.uuid4())
+
+
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(UUID, primary_key=True, default=uuid.uuid4)
+    id = Column(String(36), primary_key=True, default=_uuid_default)
     email = Column(String(255), unique=True, nullable=False, index=True)
     name = Column(String(100), nullable=False)
-    role = Column(Enum(UserRole), default=UserRole.WRITER)
+    role = Column(String(20), default=UserRole.WRITER.value)
     avatar = Column(String(500), nullable=True)
     password_hash = Column(String(255), nullable=True)
     created_at = Column(DateTime, default=datetime.now)
@@ -81,12 +84,12 @@ class User(Base):
 class Project(Base):
     __tablename__ = "projects"
 
-    id = Column(UUID, primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID, ForeignKey("users.id"), nullable=False, index=True)
+    id = Column(String(36), primary_key=True, default=_uuid_default)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
     name = Column(String(200), nullable=False)
-    status = Column(Enum(ProjectStatus), default=ProjectStatus.CREATED, index=True)
-    tender_doc_id = Column(UUID, ForeignKey("documents.id"), nullable=True)
-    config = Column(JSONB, default=dict)
+    status = Column(String(50), default=ProjectStatus.CREATED.value, index=True)
+    tender_doc_id = Column(String(36), ForeignKey("documents.id"), nullable=True)
+    config = Column(JSON, default=dict)
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
@@ -101,14 +104,14 @@ class Project(Base):
 class Document(Base):
     __tablename__ = "documents"
 
-    id = Column(UUID, primary_key=True, default=uuid.uuid4)
-    project_id = Column(UUID, ForeignKey("projects.id"), nullable=True, index=True)
-    type = Column(Enum(DocumentType), default=DocumentType.TENDER)
+    id = Column(String(36), primary_key=True, default=_uuid_default)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=True, index=True)
+    type = Column(String(20), default=DocumentType.TENDER.value)
     file_path = Column(String(500), nullable=False)
     original_name = Column(String(255), nullable=True)
     file_size = Column(Integer, nullable=True)
     parsed_content = Column(Text, nullable=True)
-    metadata = Column(JSONB, default=dict)
+    doc_metadata = Column(JSON, default=dict)
     created_at = Column(DateTime, default=datetime.now)
 
     project = relationship("Project", back_populates="documents", foreign_keys=[project_id])
@@ -117,12 +120,12 @@ class Document(Base):
 class Analysis(Base):
     __tablename__ = "analyses"
 
-    id = Column(UUID, primary_key=True, default=uuid.uuid4)
-    project_id = Column(UUID, ForeignKey("projects.id"), nullable=False, unique=True, index=True)
-    dimensions = Column(JSONB, default=dict)
-    scoring_matrix = Column(JSONB, default=dict)
-    risk_flags = Column(JSONB, default=dict)
-    sections = Column(JSONB, default=list)
+    id = Column(String(36), primary_key=True, default=_uuid_default)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, unique=True, index=True)
+    dimensions = Column(JSON, default=dict)
+    scoring_matrix = Column(JSON, default=dict)
+    risk_flags = Column(JSON, default=dict)
+    sections = Column(JSON, default=list)
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
@@ -132,11 +135,11 @@ class Analysis(Base):
 class Outline(Base):
     __tablename__ = "outlines"
 
-    id = Column(UUID, primary_key=True, default=uuid.uuid4)
-    project_id = Column(UUID, ForeignKey("projects.id"), nullable=False, unique=True, index=True)
+    id = Column(String(36), primary_key=True, default=_uuid_default)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, unique=True, index=True)
     mode = Column(String(20), default="aligned")
-    tree = Column(JSONB, default=dict)
-    score_mapping = Column(JSONB, default=dict)
+    tree = Column(JSON, default=dict)
+    score_mapping = Column(JSON, default=dict)
     reviewed = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
@@ -147,9 +150,9 @@ class Outline(Base):
 class Chapter(Base):
     __tablename__ = "chapters"
 
-    id = Column(UUID, primary_key=True, default=uuid.uuid4)
-    project_id = Column(UUID, ForeignKey("projects.id"), nullable=False, index=True)
-    outline_id = Column(UUID, ForeignKey("outlines.id"), nullable=True)
+    id = Column(String(36), primary_key=True, default=_uuid_default)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
+    outline_id = Column(String(36), ForeignKey("outlines.id"), nullable=True)
     title = Column(String(500), nullable=False)
     content = Column(Text, nullable=True)
     mode = Column(String(10), default="A")
@@ -165,12 +168,12 @@ class Chapter(Base):
 class CheckReport(Base):
     __tablename__ = "check_reports"
 
-    id = Column(UUID, primary_key=True, default=uuid.uuid4)
-    project_id = Column(UUID, ForeignKey("projects.id"), nullable=False, index=True)
-    type = Column(Enum(CheckType), nullable=False, index=True)
-    results = Column(JSONB, default=dict)
+    id = Column(String(36), primary_key=True, default=_uuid_default)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
+    type = Column(String(30), nullable=False, index=True)
+    results = Column(JSON, default=dict)
     risk_level = Column(String(20), default="low")
-    summary = Column(JSONB, default=dict)
+    summary = Column(JSON, default=dict)
     created_at = Column(DateTime, default=datetime.now)
 
     project = relationship("Project", back_populates="check_reports")
@@ -179,11 +182,11 @@ class CheckReport(Base):
 class SkillConfig(Base):
     __tablename__ = "skill_configs"
 
-    id = Column(UUID, primary_key=True, default=uuid.uuid4)
+    id = Column(String(36), primary_key=True, default=_uuid_default)
     name = Column(String(100), unique=True, nullable=False)
     category = Column(String(50), nullable=False)
     version = Column(String(20), default="1.0.0")
-    config = Column(JSONB, default=dict)
+    config = Column(JSON, default=dict)
     enabled = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.now)
 
@@ -191,11 +194,11 @@ class SkillConfig(Base):
 class AgentConfig(Base):
     __tablename__ = "agent_configs"
 
-    id = Column(UUID, primary_key=True, default=uuid.uuid4)
+    id = Column(String(36), primary_key=True, default=_uuid_default)
     name = Column(String(100), unique=True, nullable=False)
-    workflow_dsl = Column(JSONB, default=dict)
-    skills = Column(JSONB, default=list)
-    config = Column(JSONB, default=dict)
+    workflow_dsl = Column(JSON, default=dict)
+    skills = Column(JSON, default=list)
+    config = Column(JSON, default=dict)
     enabled = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.now)
 
@@ -203,8 +206,8 @@ class AgentConfig(Base):
 class Notification(Base):
     __tablename__ = "notifications"
 
-    id = Column(UUID, primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID, ForeignKey("users.id"), nullable=False, index=True)
+    id = Column(String(36), primary_key=True, default=_uuid_default)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
     channel = Column(String(50), nullable=False)
     content = Column(Text, nullable=False)
     status = Column(String(20), default="pending")
@@ -215,7 +218,7 @@ class Notification(Base):
 class KnowledgeBase(Base):
     __tablename__ = "knowledge_bases"
 
-    id = Column(UUID, primary_key=True, default=uuid.uuid4)
+    id = Column(String(36), primary_key=True, default=_uuid_default)
     name = Column(String(200), nullable=False)
     doc_count = Column(Integer, default=0)
     embedding_model = Column(String(100), default="text-embedding-v3")
@@ -226,13 +229,13 @@ class KnowledgeBase(Base):
 class MonitoringTask(Base):
     __tablename__ = "monitoring_tasks"
 
-    id = Column(UUID, primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID, ForeignKey("users.id"), nullable=False, index=True)
+    id = Column(String(36), primary_key=True, default=_uuid_default)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
     name = Column(String(200), nullable=False)
     keywords = Column(Text, nullable=False)
     exclude_keywords = Column(Text, default="")
     must_contain_keywords = Column(Text, default="")
-    sites = Column(JSONB, default=list)
+    sites = Column(JSON, default=list)
     interval_minutes = Column(Integer, default=60)
     enabled = Column(Boolean, default=True)
     last_run_at = Column(DateTime, nullable=True)
@@ -242,8 +245,8 @@ class MonitoringTask(Base):
 class CrawlResult(Base):
     __tablename__ = "crawl_results"
 
-    id = Column(UUID, primary_key=True, default=uuid.uuid4)
-    task_id = Column(UUID, ForeignKey("monitoring_tasks.id"), nullable=False, index=True)
+    id = Column(String(36), primary_key=True, default=_uuid_default)
+    task_id = Column(String(36), ForeignKey("monitoring_tasks.id"), nullable=False, index=True)
     title = Column(String(500), nullable=False)
     url = Column(String(1000), nullable=False)
     source = Column(String(500), default="")
@@ -260,7 +263,7 @@ class CrawlResult(Base):
 class RBACRole(Base):
     __tablename__ = "rbac_roles"
 
-    id = Column(UUID, primary_key=True, default=uuid.uuid4)
+    id = Column(String(36), primary_key=True, default=_uuid_default)
     name = Column(String(100), unique=True, nullable=False)
     display_name = Column(String(200), nullable=False)
     description = Column(Text, default="")
@@ -271,7 +274,7 @@ class RBACRole(Base):
 class RBACPermission(Base):
     __tablename__ = "rbac_permissions"
 
-    id = Column(UUID, primary_key=True, default=uuid.uuid4)
+    id = Column(String(36), primary_key=True, default=_uuid_default)
     code = Column(String(200), unique=True, nullable=False)
     name = Column(String(200), nullable=False)
     category = Column(String(100), nullable=False)
@@ -282,16 +285,16 @@ class RBACPermission(Base):
 class RBACUserRole(Base):
     __tablename__ = "rbac_user_roles"
 
-    id = Column(UUID, primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID, ForeignKey("users.id"), nullable=False, index=True)
-    role_id = Column(UUID, ForeignKey("rbac_roles.id"), nullable=False, index=True)
+    id = Column(String(36), primary_key=True, default=_uuid_default)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    role_id = Column(String(36), ForeignKey("rbac_roles.id"), nullable=False, index=True)
     created_at = Column(DateTime, default=datetime.now)
 
 
 class RBACRolePermission(Base):
     __tablename__ = "rbac_role_permissions"
 
-    id = Column(UUID, primary_key=True, default=uuid.uuid4)
-    role_id = Column(UUID, ForeignKey("rbac_roles.id"), nullable=False, index=True)
-    permission_id = Column(UUID, ForeignKey("rbac_permissions.id"), nullable=False, index=True)
+    id = Column(String(36), primary_key=True, default=_uuid_default)
+    role_id = Column(String(36), ForeignKey("rbac_roles.id"), nullable=False, index=True)
+    permission_id = Column(String(36), ForeignKey("rbac_permissions.id"), nullable=False, index=True)
     created_at = Column(DateTime, default=datetime.now)

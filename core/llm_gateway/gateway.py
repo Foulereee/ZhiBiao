@@ -1,4 +1,4 @@
-from typing import AsyncGenerator, Any
+from typing import AsyncGenerator, Any, Callable
 
 from litellm import acompletion
 
@@ -56,7 +56,7 @@ class LLMGateway:
         self,
         messages: list[dict],
         schema: type | None = None,
-        validator: callable | None = None,
+        validator: Callable | None = None,
         model: str | None = None,
         temperature: float = 0.3,
         max_repair_attempts: int = 2,

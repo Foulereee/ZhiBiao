@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import uuid
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -21,7 +20,7 @@ async def upload_tender_file(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Project).where(Project.id == uuid.UUID(project_id)))
+    result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
@@ -55,7 +54,7 @@ async def upload_tender_file(
 
 @router.post("/parse/{project_id}")
 async def parse_tender_file(project_id: str, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Project).where(Project.id == uuid.UUID(project_id)))
+    result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
@@ -77,7 +76,7 @@ async def parse_tender_file(project_id: str, db: AsyncSession = Depends(get_db))
         raise HTTPException(status_code=500, detail=f"文件解析失败: {e}")
 
     doc.parsed_content = parsed.text
-    doc.metadata = parsed.metadata
+    doc.doc_metadata = parsed.metadata
     project.status = ProjectStatus.INTERPRETING
     await db.flush()
 
@@ -90,13 +89,13 @@ async def parse_tender_file(project_id: str, db: AsyncSession = Depends(get_db))
         "tables_count": len(parsed.tables),
         "sections_count": len(sections),
         "sections": sections,
-        "metadata": parsed.metadata,
+        "doc_metadata": parsed.metadata,
     }
 
 
 @router.post("/interpret/{project_id}")
 async def interpret_tender(project_id: str, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Project).where(Project.id == uuid.UUID(project_id)))
+    result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
@@ -139,7 +138,7 @@ async def interpret_tender(project_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.post("/scoring-matrix/{project_id}")
 async def build_scoring_matrix(project_id: str, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Project).where(Project.id == uuid.UUID(project_id)))
+    result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
@@ -177,7 +176,7 @@ async def build_scoring_matrix(project_id: str, db: AsyncSession = Depends(get_d
 
 @router.post("/risk-alert/{project_id}")
 async def risk_alert(project_id: str, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Project).where(Project.id == uuid.UUID(project_id)))
+    result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
@@ -216,7 +215,7 @@ async def export_interpret(
 ):
     from fastapi.responses import PlainTextResponse
 
-    result = await db.execute(select(Project).where(Project.id == uuid.UUID(project_id)))
+    result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")

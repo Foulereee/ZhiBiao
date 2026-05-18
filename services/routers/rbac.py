@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import uuid
 from collections import defaultdict
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -211,7 +210,7 @@ async def update_role(
     role_id: str, data: RoleUpdate, db: AsyncSession = Depends(get_db)
 ):
     result = await db.execute(
-        select(RBACRole).where(RBACRole.id == uuid.UUID(role_id))
+        select(RBACRole).where(RBACRole.id == role_id)
     )
     role = result.scalar_one_or_none()
     if not role:
@@ -234,7 +233,7 @@ async def update_role(
 @router.delete("/roles/{role_id}")
 async def delete_role(role_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(RBACRole).where(RBACRole.id == uuid.UUID(role_id))
+        select(RBACRole).where(RBACRole.id == role_id)
     )
     role = result.scalar_one_or_none()
     if not role:
@@ -279,7 +278,7 @@ async def assign_permissions(
     role_id: str, data: PermissionAssign, db: AsyncSession = Depends(get_db)
 ):
     result = await db.execute(
-        select(RBACRole).where(RBACRole.id == uuid.UUID(role_id))
+        select(RBACRole).where(RBACRole.id == role_id)
     )
     role = result.scalar_one_or_none()
     if not role:
@@ -288,7 +287,7 @@ async def assign_permissions(
     for pid_str in data.permission_ids:
         perm_result = await db.execute(
             select(RBACPermission).where(
-                RBACPermission.id == uuid.UUID(pid_str)
+                RBACPermission.id == pid_str
             )
         )
         if not perm_result.scalar_one_or_none():
@@ -297,7 +296,7 @@ async def assign_permissions(
         existing = await db.execute(
             select(RBACRolePermission).where(
                 RBACRolePermission.role_id == role.id,
-                RBACRolePermission.permission_id == uuid.UUID(pid_str),
+                RBACRolePermission.permission_id == pid_str,
             )
         )
         if existing.scalar_one_or_none():
@@ -306,7 +305,7 @@ async def assign_permissions(
         db.add(
             RBACRolePermission(
                 role_id=role.id,
-                permission_id=uuid.UUID(pid_str),
+                permission_id=pid_str,
             )
         )
 
@@ -320,8 +319,8 @@ async def remove_permission(
 ):
     await db.execute(
         sa_delete(RBACRolePermission).where(
-            RBACRolePermission.role_id == uuid.UUID(role_id),
-            RBACRolePermission.permission_id == uuid.UUID(permission_id),
+            RBACRolePermission.role_id == role_id,
+            RBACRolePermission.permission_id == permission_id,
         )
     )
     await db.flush()
@@ -403,7 +402,7 @@ async def update_user(
     user_id: str, data: UserUpdate, db: AsyncSession = Depends(get_db)
 ):
     result = await db.execute(
-        select(User).where(User.id == uuid.UUID(user_id))
+        select(User).where(User.id == user_id)
     )
     user = result.scalar_one_or_none()
     if not user:
@@ -432,7 +431,7 @@ async def update_user(
 @router.delete("/users/{user_id}")
 async def delete_user(user_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(User).where(User.id == uuid.UUID(user_id))
+        select(User).where(User.id == user_id)
     )
     user = result.scalar_one_or_none()
     if not user:
@@ -453,22 +452,22 @@ async def assign_roles(
     user_id: str, data: RoleAssign, db: AsyncSession = Depends(get_db)
 ):
     result = await db.execute(
-        select(User).where(User.id == uuid.UUID(user_id))
+        select(User).where(User.id == user_id)
     )
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="用户不存在")
 
     for rid_str in data.role_ids:
         role_result = await db.execute(
-            select(RBACRole).where(RBACRole.id == uuid.UUID(rid_str))
+            select(RBACRole).where(RBACRole.id == rid_str)
         )
         if not role_result.scalar_one_or_none():
             continue
 
         existing = await db.execute(
             select(RBACUserRole).where(
-                RBACUserRole.user_id == uuid.UUID(user_id),
-                RBACUserRole.role_id == uuid.UUID(rid_str),
+                RBACUserRole.user_id == user_id,
+                RBACUserRole.role_id == rid_str,
             )
         )
         if existing.scalar_one_or_none():
@@ -476,8 +475,8 @@ async def assign_roles(
 
         db.add(
             RBACUserRole(
-                user_id=uuid.UUID(user_id),
-                role_id=uuid.UUID(rid_str),
+                user_id=user_id,
+                role_id=rid_str,
             )
         )
 
@@ -491,8 +490,8 @@ async def remove_role(
 ):
     await db.execute(
         sa_delete(RBACUserRole).where(
-            RBACUserRole.user_id == uuid.UUID(user_id),
-            RBACUserRole.role_id == uuid.UUID(role_id),
+            RBACUserRole.user_id == user_id,
+            RBACUserRole.role_id == role_id,
         )
     )
     await db.flush()
@@ -503,7 +502,7 @@ async def remove_role(
 async def check_permission(
     data: PermissionCheck, db: AsyncSession = Depends(get_db)
 ):
-    user_id = uuid.UUID(data.user_id)
+    user_id = data.user_id
 
     user_result = await db.execute(
         select(User).where(User.id == user_id)
@@ -543,7 +542,7 @@ async def check_permission(
 
 @router.post("/init")
 async def init_rbac(db: AsyncSession = Depends(get_db)):
-    perm_map: dict[str, uuid.UUID] = {}
+    perm_map: dict[str, str] = {}
 
     for category, perms in DEFAULT_PERMISSIONS.items():
         for code, name in perms:

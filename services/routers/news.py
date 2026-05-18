@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import uuid
 from datetime import datetime, date
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -48,7 +47,7 @@ async def list_monitor_tasks(db: AsyncSession = Depends(get_db)):
 @router.post("/tasks")
 async def create_monitor_task(task: MonitorTaskCreate, db: AsyncSession = Depends(get_db)):
     new_task = MonitoringTask(
-        user_id=uuid.UUID("00000000-0000-0000-0000-000000000000"),
+        user_id="00000000-0000-0000-0000-000000000000",
         name=task.name,
         keywords=task.keywords,
         exclude_keywords=task.exclude_keywords,
@@ -75,7 +74,7 @@ async def update_monitor_task(
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(MonitoringTask).where(MonitoringTask.id == uuid.UUID(task_id))
+        select(MonitoringTask).where(MonitoringTask.id == task_id)
     )
     task = result.scalar_one_or_none()
     if not task:
@@ -95,7 +94,7 @@ async def update_monitor_task(
 @router.delete("/tasks/{task_id}")
 async def delete_monitor_task(task_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(MonitoringTask).where(MonitoringTask.id == uuid.UUID(task_id))
+        select(MonitoringTask).where(MonitoringTask.id == task_id)
     )
     task = result.scalar_one_or_none()
     if not task:
@@ -132,7 +131,7 @@ async def _save_crawl_results(db: AsyncSession, task_id: str, items: list[dict])
                     break
 
         crawl_item = CrawlResult(
-            task_id=uuid.UUID(task_id),
+            task_id=task_id,
             title=title,
             url=item.get("url", ""),
             source=item.get("source", ""),
@@ -151,7 +150,7 @@ async def _save_crawl_results(db: AsyncSession, task_id: str, items: list[dict])
 @router.post("/tasks/{task_id}/run")
 async def run_monitor_task(task_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(MonitoringTask).where(MonitoringTask.id == uuid.UUID(task_id))
+        select(MonitoringTask).where(MonitoringTask.id == task_id)
     )
     task = result.scalar_one_or_none()
     if not task:
@@ -197,7 +196,7 @@ async def semantic_filter_results(
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(MonitoringTask).where(MonitoringTask.id == uuid.UUID(task_id))
+        select(MonitoringTask).where(MonitoringTask.id == task_id)
     )
     task = result.scalar_one_or_none()
     if not task:
@@ -254,7 +253,7 @@ async def semantic_filter_results(
 async def list_task_results(task_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(CrawlResult)
-        .where(CrawlResult.task_id == uuid.UUID(task_id))
+        .where(CrawlResult.task_id == task_id)
         .order_by(CrawlResult.created_at.desc())
         .limit(100)
     )

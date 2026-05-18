@@ -4,7 +4,7 @@ import traceback
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from uuid import UUID
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,7 +18,7 @@ class SkillContext:
     llm: LLMGateway
     parameters: dict = field(default_factory=dict)
     knowledge_base: Any = None
-    progress_callback: callable | None = None
+    progress_callback: Callable | None = None
 
 
 @dataclass

@@ -144,7 +144,7 @@ async def create_knowledge_base(kb: KnowledgeBaseCreate, db: AsyncSession = Depe
 @router.delete("/{kb_id}")
 async def delete_knowledge_base(kb_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(KnowledgeBaseModel).where(KnowledgeBaseModel.id == uuid.UUID(kb_id))
+        select(KnowledgeBaseModel).where(KnowledgeBaseModel.id == kb_id)
     )
     kb = result.scalar_one_or_none()
     if not kb:
@@ -176,7 +176,7 @@ async def upload_documents(
         )
 
     result = await db.execute(
-        select(KnowledgeBaseModel).where(KnowledgeBaseModel.id == uuid.UUID(kb_id))
+        select(KnowledgeBaseModel).where(KnowledgeBaseModel.id == kb_id)
     )
     kb = result.scalar_one_or_none()
     if not kb:
@@ -246,7 +246,7 @@ async def search_knowledge_base(
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(KnowledgeBaseModel).where(KnowledgeBaseModel.id == uuid.UUID(kb_id))
+        select(KnowledgeBaseModel).where(KnowledgeBaseModel.id == kb_id)
     )
     kb = result.scalar_one_or_none()
     if not kb:

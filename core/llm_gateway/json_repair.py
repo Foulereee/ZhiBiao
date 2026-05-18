@@ -1,6 +1,6 @@
 import json
 import re
-from typing import Any
+from typing import Any, Callable
 
 from core.exceptions import JsonRepairError
 
@@ -25,8 +25,8 @@ class JsonRepairEngine:
         self,
         raw_text: str,
         schema: type | None = None,
-        validator: callable | None = None,
-        repair_chat_fn: callable | None = None,
+        validator: Callable | None = None,
+        repair_chat_fn: Callable | None = None,
         max_attempts: int = 2,
     ) -> dict | list:
         text = self.extract_json(raw_text)
@@ -89,7 +89,7 @@ class JsonRepairEngine:
         open_brackets = text.count("[") - text.count("]")
         return text + "]" * max(0, open_brackets) + "}" * max(0, open_braces)
 
-    async def _llm_repair(self, broken_json: str, error: str, chat_fn: callable) -> dict | None:
+    async def _llm_repair(self, broken_json: str, error: str, chat_fn: Callable) -> dict | None:
         messages = [
             {"role": "system", "content": "修复以下非法JSON。只输出修复后的合法JSON，不要解释。"},
             {"role": "user", "content": f"错误: {error}\n内容: {broken_json[:2000]}"},

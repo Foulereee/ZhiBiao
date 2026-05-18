@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import uuid
 import tempfile
 import os
 
@@ -20,7 +19,7 @@ router = APIRouter()
 
 
 async def _get_tender_and_bid_text(project_id: str, db: AsyncSession):
-    result = await db.execute(select(Project).where(Project.id == uuid.UUID(project_id)))
+    result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
@@ -433,7 +432,7 @@ async def full_check(project_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.get("/{project_id}/reports")
 async def list_check_reports(project_id: str, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Project).where(Project.id == uuid.UUID(project_id)))
+    result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
@@ -565,7 +564,7 @@ _CHECK_SKILL_MAP = {
     "duplicate": ("services.check.skills.duplicate_check_skill", "DuplicateCheckSkill"),
     "mandatoryReq": ("services.check.skills.mandatory_req_check_skill", "MandatoryReqCheckSkill"),
     "docIntegrity": ("services.check.skills.doc_integrity_check_skill", "DocIntegrityCheckSkill"),
-    "aiTextCheck": ("services.check.skills.ai_text_check_skill", "AiTextCheckSkill"),
+    "aiTextCheck": ("services.check.skills.ai_text_check_skill", "AITextCheckSkill"),
     "riskScore": ("services.check.skills.risk_score_skill", "RiskScoreSkill"),
     "crossCheck": ("services.check.skills.cross_check_skill", "CrossCheckSkill"),
     "sampleReport": ("services.check.skills.sample_report_check_skill", "SampleReportCheckSkill"),
@@ -760,12 +759,12 @@ async def export_check_report(
 ):
     from fastapi.responses import PlainTextResponse
 
-    result = await db.execute(select(CheckReport).where(CheckReport.id == uuid.UUID(report_id)))
+    result = await db.execute(select(CheckReport).where(CheckReport.id == report_id))
     report = result.scalar_one_or_none()
     if not report:
         raise HTTPException(status_code=404, detail="报告不存在")
 
-    project_result = await db.execute(select(Project).where(Project.id == uuid.UUID(project_id)))
+    project_result = await db.execute(select(Project).where(Project.id == project_id))
     project = project_result.scalar_one_or_none()
     project_name = project.name if project else "未命名项目"
 
@@ -812,9 +811,9 @@ async def check_doc_integrity(project_id: str, db: AsyncSession = Depends(get_db
 @router.post("/{project_id}/ai-text-check")
 async def check_ai_text(project_id: str, db: AsyncSession = Depends(get_db)):
     project, tender_text, bid_text = await _get_tender_and_bid_text(project_id, db)
-    from services.check.skills.ai_text_check_skill import AiTextCheckSkill
+    from services.check.skills.ai_text_check_skill import AITextCheckSkill
     gateway = get_llm_gateway()
-    skill = AiTextCheckSkill()
+    skill = AITextCheckSkill()
     ctx = SkillContext(project_id=project_id, db=db, llm=gateway, parameters={"bid_text": bid_text})
     skill_result = await skill.safe_execute(ctx)
     if skill_result.success:

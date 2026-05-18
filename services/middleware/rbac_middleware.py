@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import uuid
 from functools import wraps
 
 from fastapi import Depends, HTTPException, Request
@@ -23,12 +22,10 @@ async def get_current_user(
     if not user_id_str:
         raise HTTPException(status_code=401, detail="未提供用户标识")
 
-    try:
-        user_id = uuid.UUID(user_id_str)
-    except ValueError:
+    if not user_id_str or len(user_id_str) != 36:
         raise HTTPException(status_code=401, detail="无效的用户标识")
 
-    result = await db.execute(select(User).where(User.id == user_id))
+    result = await db.execute(select(User).where(User.id == user_id_str))
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=401, detail="用户不存在")
@@ -37,7 +34,7 @@ async def get_current_user(
 
 
 async def check_user_permission(
-    user_id: uuid.UUID,
+    user_id: str,
     permission_code: str,
     db: AsyncSession,
 ) -> bool:

@@ -18,7 +18,7 @@ def get_llm_gateway() -> LLMGateway:
                 }
             ],
             "default_model": settings.llm_default_model,
-            "fallback_models": [m.strip() for m in settings.llm_fallback_models.split(",") if m.strip()],
+            "fallback_models": [m.strip() for m in settings.llm_fallback_modes.split(",") if m.strip()],
             "max_retries": settings.llm_max_retries,
         })
     return _gateway

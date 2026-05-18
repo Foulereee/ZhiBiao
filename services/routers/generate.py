@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import uuid
 import json
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -22,7 +21,7 @@ async def generate_outline(
     mode: str = "aligned",
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Project).where(Project.id == uuid.UUID(project_id)))
+    result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
@@ -97,7 +96,7 @@ async def generate_structure(
     structure_type: str,
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Project).where(Project.id == uuid.UUID(project_id)))
+    result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
@@ -135,7 +134,7 @@ async def get_score_coverage(
     project_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Project).where(Project.id == uuid.UUID(project_id)))
+    result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
@@ -184,13 +183,13 @@ async def generate_chapter(
     mode: str = "A",
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Project).where(Project.id == uuid.UUID(project_id)))
+    result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
 
     chapter_result = await db.execute(
-        select(Chapter).where(Chapter.id == uuid.UUID(chapter_id))
+        select(Chapter).where(Chapter.id == chapter_id)
     )
     chapter = chapter_result.scalar_one_or_none()
     if not chapter:
@@ -248,13 +247,13 @@ async def stream_generate_chapter(
     mode: str = "A",
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Project).where(Project.id == uuid.UUID(project_id)))
+    result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
 
     chapter_result = await db.execute(
-        select(Chapter).where(Chapter.id == uuid.UUID(chapter_id))
+        select(Chapter).where(Chapter.id == chapter_id)
     )
     chapter = chapter_result.scalar_one_or_none()
     if not chapter:
@@ -310,7 +309,7 @@ async def extract_mandatory_requirements(
     project_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Project).where(Project.id == uuid.UUID(project_id)))
+    result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")

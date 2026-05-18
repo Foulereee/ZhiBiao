@@ -16,7 +16,7 @@ from core.exceptions import (
     GateNotPassedException,
     ProjectNotFoundError,
 )
-from services.database import init_db, close_db
+from services.database import init_db, close_db, is_db_ready
 from services.routers import projects, interpret, generate, check, format_doc, skills, llm_config, news, knowledge, rbac, ai_image
 
 
@@ -103,7 +103,7 @@ app.include_router(ai_image.router, prefix="/api/ai-image", tags=["AI配图"])
 
 @app.get("/api/health")
 async def health_check():
-    return {"status": "ok", "app": "BidMaster Pro", "version": "0.1.0"}
+    return {"status": "ok", "app": "BidMaster Pro", "version": "0.1.0", "db_ready": is_db_ready()}
 
 
 @app.get("/api/stats")
@@ -111,9 +111,14 @@ async def get_stats():
     from core.skill_engine.registry import SkillRegistry
     from services.llm_factory import get_llm_gateway
     registry = SkillRegistry.instance()
-    gateway = get_llm_gateway()
+    try:
+        gateway = get_llm_gateway()
+        token_usage = gateway.get_token_summary()
+    except Exception:
+        token_usage = {}
     return {
         "skills_count": len(registry._skills),
         "skills": registry.list_all(),
-        "token_usage": gateway.get_token_summary(),
+        "token_usage": token_usage,
+        "db_ready": is_db_ready(),
     }

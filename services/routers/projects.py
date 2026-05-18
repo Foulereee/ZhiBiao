@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
@@ -37,7 +36,7 @@ async def create_project(
     db: AsyncSession = Depends(get_db),
     tender_file: UploadFile | None = File(None),
 ):
-    project = Project(name=name, status=ProjectStatus.CREATED)
+    project = Project(name=name, status=ProjectStatus.CREATED.value)
     db.add(project)
     await db.flush()
 
@@ -56,7 +55,7 @@ async def create_project(
 
         doc = Document(
             project_id=project.id,
-            type=DocumentType.TENDER,
+            type=DocumentType.TENDER.value,
             file_path=str(file_path),
             original_name=tender_file.filename,
             file_size=len(content),
@@ -74,7 +73,7 @@ async def create_project(
 
 @router.get("/{project_id}")
 async def get_project(project_id: str, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Project).where(Project.id == uuid.UUID(project_id)))
+    result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
@@ -93,7 +92,7 @@ async def update_project_status(
     status: str,
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Project).where(Project.id == uuid.UUID(project_id)))
+    result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")

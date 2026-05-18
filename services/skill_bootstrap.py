@@ -24,7 +24,7 @@ from services.check.skills.doc_integrity_check_skill import DocIntegrityCheckSki
 from services.check.skills.mandatory_req_check_skill import MandatoryReqCheckSkill
 from services.check.skills.whitelist_filter_skill import WhitelistFilterSkill
 from services.check.skills.check_report_export_skill import CheckReportExportSkill
-from services.check.skills.ai_text_check_skill import AiTextCheckSkill
+from services.check.skills.ai_text_check_skill import AITextCheckSkill
 from services.check.skills.risk_score_skill import RiskScoreSkill
 from services.check.skills.cross_check_skill import CrossCheckSkill
 from services.check.skills.sample_report_check_skill import SampleReportCheckSkill
@@ -72,7 +72,7 @@ def register_builtin_skills():
     registry.register(MandatoryReqCheckSkill)
     registry.register(WhitelistFilterSkill)
     registry.register(CheckReportExportSkill)
-    registry.register(AiTextCheckSkill)
+    registry.register(AITextCheckSkill)
     registry.register(RiskScoreSkill)
     registry.register(CrossCheckSkill)
     registry.register(SampleReportCheckSkill)
