@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -17,7 +19,7 @@ ALLOWED_EXTENSIONS = {".pdf", ".docx", ".doc", ".txt", ".wps", ".md"}
 @router.post("/upload/{project_id}")
 async def upload_tender_file(
     project_id: str,
-    file: UploadFile = File(...),
+    files: list[UploadFile] = File(...),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(select(Project).where(Project.id == project_id))
@@ -25,31 +27,85 @@ async def upload_tender_file(
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
 
-    from pathlib import Path
-    file_ext = Path(file.filename).suffix.lower() if file.filename else ""
-    if file_ext not in ALLOWED_EXTENSIONS:
-        raise HTTPException(status_code=400, detail=f"不支持的文件格式: {file_ext}")
     upload_dir = Path(f"./projects/{project_id}")
     upload_dir.mkdir(parents=True, exist_ok=True)
-    file_path = upload_dir / file.filename
-    content = await file.read()
-    if len(content) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=400, detail=f"文件大小超过限制({MAX_FILE_SIZE // 1024 // 1024}MB)")
-    with open(file_path, "wb") as f:
-        f.write(content)
 
-    doc = Document(
-        project_id=project.id,
-        type="tender",
-        file_path=str(file_path),
-        original_name=file.filename,
-        file_size=len(content),
+    uploaded = []
+    for file in files:
+        file_ext = Path(file.filename).suffix.lower() if file.filename else ""
+        if file_ext not in ALLOWED_EXTENSIONS:
+            raise HTTPException(status_code=400, detail=f"不支持的文件格式: {file_ext}")
+
+        content = await file.read()
+        if len(content) > MAX_FILE_SIZE:
+            raise HTTPException(status_code=400, detail=f"文件大小超过限制({MAX_FILE_SIZE // 1024 // 1024}MB)")
+
+        file_path = upload_dir / file.filename
+        with open(file_path, "wb") as f:
+            f.write(content)
+
+        doc = Document(
+            project_id=project.id,
+            type="tender",
+            file_path=str(file_path),
+            original_name=file.filename,
+            file_size=len(content),
+        )
+        db.add(doc)
+        await db.flush()
+
+        if not project.tender_doc_id:
+            project.tender_doc_id = doc.id
+            await db.flush()
+
+        uploaded.append({
+            "document_id": str(doc.id),
+            "file_name": file.filename,
+            "file_size": len(content),
+        })
+
+    return {"uploaded": uploaded, "total": len(uploaded)}
+
+
+@router.get("/documents/{project_id}")
+async def list_documents(project_id: str, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(Document).where(Document.project_id == project_id).order_by(Document.created_at)
     )
-    db.add(doc)
-    project.tender_doc_id = doc.id
-    await db.flush()
+    docs = result.scalars().all()
+    return {"documents": [
+        {
+            "id": str(d.id),
+            "file_name": d.original_name,
+            "file_size": d.file_size,
+            "type": d.type,
+            "parsed": d.parsed_content is not None,
+            "created_at": d.created_at.isoformat() if d.created_at else None,
+        }
+        for d in docs
+    ]}
 
-    return {"document_id": str(doc.id), "file_name": file.filename, "file_size": len(content)}
+
+@router.get("/document/{document_id}")
+async def get_document_content(document_id: str, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Document).where(Document.id == document_id))
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="文档不存在")
+
+    content_preview = None
+    if doc.parsed_content:
+        content_preview = doc.parsed_content[:50000]
+
+    return {
+        "id": str(doc.id),
+        "file_name": doc.original_name,
+        "file_size": doc.file_size,
+        "type": doc.type,
+        "parsed_content": content_preview,
+        "doc_metadata": doc.doc_metadata,
+        "created_at": doc.created_at.isoformat() if doc.created_at else None,
+    }
 
 
 @router.post("/parse/{project_id}")
@@ -77,7 +133,7 @@ async def parse_tender_file(project_id: str, db: AsyncSession = Depends(get_db))
 
     doc.parsed_content = parsed.text
     doc.doc_metadata = parsed.metadata
-    project.status = ProjectStatus.INTERPRETING
+    project.status = ProjectStatus.INTERPRETING.value
     await db.flush()
 
     detector = SectionDetector(llm_gateway=get_llm_gateway())
@@ -90,6 +146,48 @@ async def parse_tender_file(project_id: str, db: AsyncSession = Depends(get_db))
         "sections_count": len(sections),
         "sections": sections,
         "doc_metadata": parsed.metadata,
+    }
+
+
+@router.get("/analysis/{project_id}")
+async def get_analysis(project_id: str, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+
+    analysis_result = await db.execute(
+        select(Analysis).where(Analysis.project_id == project.id)
+    )
+    analysis = analysis_result.scalar_one_or_none()
+
+    doc_result = await db.execute(
+        select(Document).where(Document.id == project.tender_doc_id)
+    )
+    doc = doc_result.scalar_one_or_none()
+
+    has_documents = False
+    doc_list_result = await db.execute(
+        select(Document).where(Document.project_id == project.id).order_by(Document.created_at)
+    )
+    doc_list = doc_list_result.scalars().all()
+    has_documents = len(doc_list) > 0
+    has_parsed = any(d.parsed_content is not None for d in doc_list)
+
+    return {
+        "has_documents": has_documents,
+        "has_parsed": has_parsed,
+        "has_analysis": analysis is not None and analysis.dimensions is not None,
+        "analysis": {
+            "dimensions": analysis.dimensions if analysis else None,
+            "scoring_matrix": analysis.scoring_matrix if analysis else None,
+            "risk_flags": analysis.risk_flags if analysis else None,
+            "sections": analysis.sections if analysis else None,
+        } if analysis else None,
+        "parse_info": {
+            "text_length": len(doc.parsed_content) if doc and doc.parsed_content else 0,
+            "doc_metadata": doc.doc_metadata if doc else None,
+        } if doc and doc.parsed_content else None,
     }
 
 
@@ -121,11 +219,24 @@ async def interpret_tender(project_id: str, db: AsyncSession = Depends(get_db)):
     skill_result = await skill.safe_execute(ctx)
 
     if skill_result.success:
-        analysis = Analysis(
-            project_id=project.id,
-            dimensions=skill_result.data.get("dimensions", {}),
+        existing = await db.execute(
+            select(Analysis).where(Analysis.project_id == project.id)
         )
-        db.add(analysis)
+        analysis = existing.scalar_one_or_none()
+        if analysis:
+            analysis.dimensions = skill_result.data.get("dimensions", {})
+            analysis.scoring_matrix = skill_result.data.get("scoring_matrix", {})
+            analysis.risk_flags = skill_result.data.get("risk_flags", {})
+            analysis.sections = skill_result.data.get("sections", [])
+        else:
+            analysis = Analysis(
+                project_id=project.id,
+                dimensions=skill_result.data.get("dimensions", {}),
+                scoring_matrix=skill_result.data.get("scoring_matrix", {}),
+                risk_flags=skill_result.data.get("risk_flags", {}),
+                sections=skill_result.data.get("sections", []),
+            )
+            db.add(analysis)
         await db.flush()
 
     return {

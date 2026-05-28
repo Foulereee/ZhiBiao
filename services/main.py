@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import traceback
 from contextlib import asynccontextmanager
 
@@ -8,6 +9,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from core.settings import get_settings
+
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+# 降低 SQLAlchemy 引擎日志级别（太多 INFO 日志）
+logging.getLogger("sqlalchemy.engine.Engine").setLevel(logging.WARNING)
 from core.exceptions import (
     LLMGatewayError,
     JsonRepairError,
@@ -17,7 +27,7 @@ from core.exceptions import (
     ProjectNotFoundError,
 )
 from services.database import init_db, close_db, is_db_ready
-from services.routers import projects, interpret, generate, check, format_doc, skills, llm_config, news, knowledge, rbac, ai_image
+from services.routers import projects, interpret, generate, check, format_doc, skills, llm_config, news, knowledge, rbac, ai_image, auth, agent_runtime
 
 
 @asynccontextmanager
@@ -88,6 +98,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 
+app.include_router(auth.router, prefix="/api/auth", tags=["认证"])
 app.include_router(projects.router, prefix="/api/projects", tags=["项目管理"])
 app.include_router(interpret.router, prefix="/api/interpret", tags=["招标解读"])
 app.include_router(generate.router, prefix="/api/generate", tags=["投标生成"])
@@ -99,6 +110,7 @@ app.include_router(news.router, prefix="/api/news", tags=["资讯中心"])
 app.include_router(knowledge.router, prefix="/api/knowledge", tags=["知识库"])
 app.include_router(rbac.router, prefix="/api/rbac", tags=["权限管理"])
 app.include_router(ai_image.router, prefix="/api/ai-image", tags=["AI配图"])
+app.include_router(agent_runtime.router, prefix="/api/agent", tags=["多Agent编排"])
 
 
 @app.get("/api/health")

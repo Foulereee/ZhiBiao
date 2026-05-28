@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -11,8 +13,135 @@ from services.database import get_db
 from services.models import Project, Document, Analysis, Outline, Chapter, ProjectStatus
 from services.llm_factory import get_llm_gateway
 from core.skill_engine.base import SkillContext
+from core.task_manager import TaskManager
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+# ─────────────────────────────────────────────
+# 异步任务端点
+# ─────────────────────────────────────────────
+
+@router.get("/task/{task_id}")
+async def get_task_status(task_id: str):
+    """查询异步任务状态"""
+    tm = TaskManager.instance()
+    task = tm.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return task.to_dict()
+
+
+# ─────────────────────────────────────────────
+# 大纲生成（异步任务模式）
+# ─────────────────────────────────────────────
+
+async def _do_generate_outline(project_id: str, mode: str):
+    """大纲生成的实际执行逻辑（在后台任务中运行）"""
+    from services.database import async_session
+
+    session_factory = async_session()
+    async with session_factory() as db:
+        try:
+            t0 = time.monotonic()
+            logger.info(f"[大纲生成] 开始 project_id={project_id}, mode={mode}")
+
+            result = await db.execute(select(Project).where(Project.id == project_id))
+            project = result.scalar_one_or_none()
+            if not project:
+                return {"success": False, "error": "项目不存在"}
+
+            doc_result = await db.execute(
+                select(Document).where(Document.id == project.tender_doc_id)
+            )
+            doc = doc_result.scalar_one_or_none()
+            if not doc or not doc.parsed_content:
+                return {"success": False, "error": "请先解析招标文件"}
+
+            logger.info(f"[大纲生成] DB查询完成 耗时={time.monotonic()-t0:.2f}s, "
+                        f"文档长度={len(doc.parsed_content)}字符")
+
+            analysis_result = await db.execute(
+                select(Analysis).where(Analysis.project_id == project.id)
+            )
+            analysis = analysis_result.scalar_one_or_none()
+
+            scoring_matrix = {}
+            if analysis and analysis.scoring_matrix:
+                scoring_matrix = analysis.scoring_matrix
+            elif analysis and analysis.dimensions:
+                scoring_dim = analysis.dimensions.get("scoring", {})
+                if scoring_dim and isinstance(scoring_dim, dict):
+                    scoring_items = scoring_dim.get("scoring_items", scoring_dim.get("evaluation细则", []))
+                    if scoring_items and isinstance(scoring_items, list):
+                        scoring_matrix = {"rows": [
+                            {
+                                "category": item.get("name", item.get("category", "")),
+                                "item": item.get("name", item.get("description", item.get("item", ""))),
+                                "score": item.get("score", item.get("max_score", 0)),
+                            }
+                            for item in scoring_items if isinstance(item, dict)
+                        ]}
+
+            from services.generate.skills.outline_gen_skill import OutlineGenSkill
+
+            gateway = get_llm_gateway()
+            skill = OutlineGenSkill()
+            ctx = SkillContext(
+                project_id=project_id,
+                db=db,
+                llm=gateway,
+                parameters={
+                    "mode": mode,
+                    "document_text": doc.parsed_content,
+                    "scoring_matrix": scoring_matrix,
+                },
+            )
+
+            logger.info(f"[大纲生成] 调用Skill, model={gateway.default_model}")
+            skill_result = await skill.safe_execute(ctx)
+
+            logger.info(f"[大纲生成] Skill完成, 耗时={time.monotonic()-t0:.1f}s, "
+                        f"success={skill_result.success}")
+
+            if skill_result.success:
+                outline_data = skill_result.data.get("outline", {})
+                score_mapping = outline_data.get("score_mapping", {}) if isinstance(outline_data, dict) else {}
+                chapters = outline_data.get("chapters", []) if isinstance(outline_data, dict) else []
+
+                if not chapters:
+                    return {"success": False, "error": "大纲生成结果为空，请重试"}
+
+                existing = await db.execute(
+                    select(Outline).where(Outline.project_id == project.id)
+                )
+                outline = existing.scalar_one_or_none()
+                if outline:
+                    outline.mode = mode
+                    outline.tree = outline_data
+                    outline.score_mapping = score_mapping
+                else:
+                    outline = Outline(
+                        project_id=project.id,
+                        mode=mode,
+                        tree=outline_data,
+                        score_mapping=score_mapping,
+                    )
+                    db.add(outline)
+
+                project.status = ProjectStatus.OUTLINING.value
+                await db.commit()
+
+            return {
+                "success": skill_result.success,
+                "data": skill_result.data,
+                "error": skill_result.error,
+                "warnings": skill_result.warnings,
+            }
+        except Exception as e:
+            logger.error(f"[大纲生成] 异常: {e}")
+            return {"success": False, "error": str(e)}
 
 
 @router.post("/{project_id}/outline")
@@ -21,72 +150,24 @@ async def generate_outline(
     mode: str = "aligned",
     db: AsyncSession = Depends(get_db),
 ):
+    """大纲生成（异步任务模式）。
+
+    立即返回 task_id，前端通过 GET /generate/task/{task_id} 轮询结果。
+    兼容模式：如果请求带 ?sync=1 则走同步模式（调试用）。
+    """
+    # 快速校验
     result = await db.execute(select(Project).where(Project.id == project_id))
-    project = result.scalar_one_or_none()
-    if not project:
+    if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="项目不存在")
 
-    doc_result = await db.execute(
-        select(Document).where(Document.id == project.tender_doc_id)
-    )
-    doc = doc_result.scalar_one_or_none()
-    if not doc or not doc.parsed_content:
-        raise HTTPException(status_code=400, detail="请先解析招标文件")
-
-    analysis_result = await db.execute(
-        select(Analysis).where(Analysis.project_id == project.id)
-    )
-    analysis = analysis_result.scalar_one_or_none()
-
-    scoring_matrix = {}
-    if analysis and analysis.scoring_matrix:
-        scoring_matrix = analysis.scoring_matrix
-
-    from services.generate.skills.outline_gen_skill import OutlineGenSkill
-
-    gateway = get_llm_gateway()
-    skill = OutlineGenSkill()
-    ctx = SkillContext(
-        project_id=project_id,
-        db=db,
-        llm=gateway,
-        parameters={
-            "mode": mode,
-            "document_text": doc.parsed_content,
-            "scoring_matrix": scoring_matrix,
-        },
-    )
-    skill_result = await skill.safe_execute(ctx)
-
-    if skill_result.success:
-        outline_data = skill_result.data.get("outline", {})
-        score_mapping = skill_result.data.get("score_mapping", {})
-
-        existing = await db.execute(
-            select(Outline).where(Outline.project_id == project.id)
-        )
-        outline = existing.scalar_one_or_none()
-        if outline:
-            outline.mode = mode
-            outline.tree = outline_data
-            outline.score_mapping = score_mapping
-        else:
-            outline = Outline(
-                project_id=project.id,
-                mode=mode,
-                tree=outline_data,
-                score_mapping=score_mapping,
-            )
-            db.add(outline)
-
-        project.status = ProjectStatus.OUTLINING
-        await db.flush()
+    # 提交异步任务
+    tm = TaskManager.instance()
+    task = await tm.submit("outline_gen", _do_generate_outline, project_id, mode)
 
     return {
-        "success": skill_result.success,
-        "data": skill_result.data,
-        "error": skill_result.error,
-        "warnings": skill_result.warnings,
+        "task_id": task.task_id,
+        "status": "pending",
+        "message": "大纲生成任务已提交，请通过 GET /generate/task/{task_id} 查询进度",
     }
 
 

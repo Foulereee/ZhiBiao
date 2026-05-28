@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Bell, User, ChevronRight, LayoutDashboard, X } from 'lucide-react';
+import { Bell, User, ChevronRight, LayoutDashboard, X, LogOut } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 
 const pipelineMeta: Record<string, { label: string; step: number; color: string }> = {
@@ -20,10 +20,16 @@ const allSteps = [
 export default function Header() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { currentProjectId } = useAppStore();
+  const { currentProjectId, user, logout } = useAppStore();
   const currentPath = location.pathname;
   const meta = pipelineMeta[currentPath];
   const [showNotif, setShowNotif] = useState(false);
+  const [showUserMenu, setShowUserMenu] = useState(false);
+
+  const handleLogout = () => {
+    logout();
+    navigate('/login');
+  };
 
   return (
     <header
@@ -153,17 +159,77 @@ export default function Header() {
             </div>
           )}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}
-          onClick={() => navigate('/settings')}
-        >
-          <div style={{
-            width: '30px', height: '30px', borderRadius: '8px',
-            background: 'var(--color-primary-light)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}>
-            <User size={14} color="var(--color-primary)" />
+        <div style={{ position: 'relative' }}>
+          <div
+            style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}
+            onClick={() => setShowUserMenu(!showUserMenu)}
+          >
+            <div style={{
+              width: '30px', height: '30px', borderRadius: '8px',
+              background: 'var(--color-primary-light)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <User size={14} color="var(--color-primary)" />
+            </div>
+            <span style={{ fontSize: '13px', color: 'var(--color-text)', fontWeight: 500 }}>
+              {user?.name || '未登录'}
+            </span>
           </div>
-          <span style={{ fontSize: '13px', color: 'var(--color-text)', fontWeight: 500 }}>管理员</span>
+          {showUserMenu && (
+            <div style={{
+              position: 'absolute', top: '40px', right: '0',
+              width: '180px', background: 'var(--color-surface)',
+              borderRadius: '10px', border: '1px solid var(--color-border)',
+              boxShadow: '0 8px 24px rgba(0,0,0,0.12)', zIndex: 100,
+              overflow: 'hidden',
+            }}>
+              {user ? (
+                <>
+                  <div style={{
+                    padding: '10px 14px', borderBottom: '1px solid var(--color-border)',
+                    fontSize: '12px', color: 'var(--color-text-secondary)',
+                  }}>
+                    {user.email}
+                  </div>
+                  <button
+                    onClick={() => { navigate('/settings'); setShowUserMenu(false); }}
+                    style={{
+                      width: '100%', padding: '10px 14px', background: 'none',
+                      border: 'none', cursor: 'pointer', fontSize: '13px',
+                      color: 'var(--color-text)', textAlign: 'left',
+                      display: 'flex', alignItems: 'center', gap: '8px',
+                    }}
+                  >
+                    <User size={14} /> 个人设置
+                  </button>
+                  <button
+                    onClick={handleLogout}
+                    style={{
+                      width: '100%', padding: '10px 14px', background: 'none',
+                      border: 'none', cursor: 'pointer', fontSize: '13px',
+                      color: '#dc2626', textAlign: 'left',
+                      display: 'flex', alignItems: 'center', gap: '8px',
+                      borderTop: '1px solid var(--color-border)',
+                    }}
+                  >
+                    <LogOut size={14} /> 退出登录
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={() => { navigate('/login'); setShowUserMenu(false); }}
+                  style={{
+                    width: '100%', padding: '12px 14px', background: 'none',
+                    border: 'none', cursor: 'pointer', fontSize: '13px',
+                    color: 'var(--color-primary)', textAlign: 'center',
+                    fontWeight: 500,
+                  }}
+                >
+                  前往登录
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </header>

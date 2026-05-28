@@ -1,8 +1,21 @@
-import { Outlet } from 'react-router-dom';
+import { Outlet, Navigate } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import Header from './Header';
+import { useAppStore } from '../../stores/appStore';
 
 export default function AppLayout() {
+  const token = useAppStore((s) => s.token);
+  const hydrated = useAppStore((s) => s._hydrated);
+
+  if (!hydrated) {
+    const lsToken = localStorage.getItem('bidmaster_token');
+    if (!lsToken) {
+      return <Navigate to="/login" replace />;
+    }
+  } else if (!token) {
+    return <Navigate to="/login" replace />;
+  }
+
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
       <Sidebar />

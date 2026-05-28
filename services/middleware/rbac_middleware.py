@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from functools import wraps
-
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,11 +16,22 @@ from services.models import (
 async def get_current_user(
     request: Request, db: AsyncSession = Depends(get_db)
 ) -> User:
-    user_id_str = request.headers.get("X-User-ID")
+    from services.routers.auth import verify_token
+
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+        session = verify_token(token)
+        if not session:
+            raise HTTPException(status_code=401, detail="未登录或会话已过期")
+        user_id_str = session["user_id"]
+    else:
+        user_id_str = request.headers.get("X-User-ID", "")
+
     if not user_id_str:
         raise HTTPException(status_code=401, detail="未提供用户标识")
 
-    if not user_id_str or len(user_id_str) != 36:
+    if len(user_id_str) < 10:
         raise HTTPException(status_code=401, detail="无效的用户标识")
 
     result = await db.execute(select(User).where(User.id == user_id_str))
