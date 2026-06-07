@@ -6,25 +6,43 @@
 ![Python](https://img.shields.io/badge/python-3.12+-green.svg)
 ![License](https://img.shields.io/badge/license-MIT-orange.svg)
 
-**基于 AI Agent 架构的智能招投标解决方案**
+**AI 智能招投标助手 · 标书生成 · 投标生成 · 投标检查 · 文档排版 全流程自动化**
 
-[功能特性](#功能特性) • [技术架构](#技术架构) • [快速开始](#快速开始) • [项目结构](#项目结构) • [API文档](#api文档)
+[功能特性](#功能特性) • [界面预览](#界面预览) • [技术架构](#技术架构) • [快速开始](#快速开始) • [项目结构](#项目结构) • [API文档](#api文档)
 
 </div>
+
+> 🚀 **全流程智能招投标 Agent**：4 阶段流水线（**招标解读 / 投标生成 / 投标检查 / 文档排版**），多 Agent 协同 + 可编排工作流，**21 项专业合规检查规则**、**多 LLM 供应商灵活切换**（DeepSeek / 硅基流动 / OpenAI / 通义等），轻量级 Skill 引擎 + 可插拔能力，RAG 知识库（支持**语义重排**与公司画像过滤），MinerU 扫描件 OCR 抽取，商机监控 + 今日热点聚合，桌面客户端 / 服务端 / Docker 一键部署。喜欢给个 ⭐ Star！
 
 ---
 
 ## 📋 项目简介
 
-BidMaster Pro 是一个基于现代 AI 技术构建的全流程智能招投标平台，采用微服务架构和 Agent 驱动的设计理念。系统通过 LLM（大语言模型）、RAG（检索增强生成）和 Skill Engine（技能引擎）三大核心引擎，实现从招标文件解读、投标书自动生成、合规性检查到文档输出的完整工作流自动化。
+BidMaster Pro 是基于 AI Agent 架构的全流程智能招投标平台。通过 LLM（大语言模型）、RAG（检索增强生成）和 Skill Engine（技能引擎）三大核心引擎，实现从**招标文件解读**、**投标书自动生成**、**合规性检查**到**文档排版输出**的完整工作流自动化。
 
-### 核心价值
+- **智能标书生成**: 自动理解招标文件，一键生成高质量投标书
+- **投标流程自动化**: 大纲生成、内容填充、格式排版一键完成
+- **21 项合规检查**: 保证金 / 签字盖章 / 有效期 / 一致性 / 重复率 / 价格合理性等全方位审核
+- **多 LLM 灵活切换**: DeepSeek / 硅基流动 / OpenAI / 通义千问 / Ollama 本地模型，可热切换
+- **RAG 知识库**: 企业资料 / 历史标书向量化存储 + 语义重排 + 公司画像过滤
+- **商机监控**: 招投标公告自动抓取 + 今日热点聚合 + 关键词精准匹配
 
-- **智能化**: 利用大语言模型自动理解招标文件，生成高质量投标内容
-- **自动化**: 一键完成大纲生成、内容填充、格式排版等繁琐工作
-- **合规性**: 内置 21 项专业检查规则，确保投标文件符合招标要求
-- **可扩展**: 基于 Skill 架构，支持自定义业务逻辑和功能扩展
-- **多模态**: 支持 PDF、Word、TXT 等多种文档格式的解析和输出
+---
+
+## 📸 界面预览
+
+
+| 页面 | 预览 |
+| :--- | :---: |
+| **工作台** | ![工作台](packages/desktop/images/工作台.png) |
+| **招标解读** | ![招标解读](packages/desktop/images/招标解读.png) |
+| **投标生成 - 结构模板** | ![投标生成-结构模板](packages/desktop/images/投标生成-结构模板.png) |
+| **投标生成 - 正文生成** | ![投标生成-正文生成](packages/desktop/images/投标生成-正文生成.png) |
+| **投标检查 - 项目模式** | ![投标检查-项目](packages/desktop/images/投标检查-项目.png) |
+| **投标检查 - 上传文件模式** | ![投标检查-上传](packages/desktop/images/投标检查-上传.png) |
+| **文档输出** | ![文档排版](packages/desktop/images/文档排版.png) |
+| **文档输出（无正文）** | ![文档排版-无](packages/desktop/images/文档排版-无.png) |
+| **咨询中心** | ![咨询中心](packages/desktop/images/咨询中心.png) |
 
 ---
 
@@ -55,10 +73,22 @@ BidMaster Pro 是一个基于现代 AI 技术构建的全流程智能招投标�
 #### 4. 文档输出 (Format)
 - **智能排版**: 自动调整格式、字体、段落样式
 - **模板配置**: 支持自定义投标文件模板
-- **PDF 导出**: 一键生成标准 PDF 投标文件
+- **多格式导出**: docx (源) / doc / PDF 三种格式一键导出，docx 为唯一中间格式
+- **格式检查 / 差异对比**: 与期望模板逐项对比，可自动修正
 - **修订模式**: 支持多人协作审阅和批注
 
+#### 5. MinerU OCR 集成
+- **扫描件抽取**: 接入 MinerU 云端 SaaS 或自部署 OpenAPI 服务，从扫描件 PDF / 图片中抽取结构化文字与版面
+- **平台化配置**: `平台设置 → MinerU OCR` Tab 统一管理（云端 / 自部署、API Key、endpoint、超时、轮询策略）
+- **API 调用**: `POST /api/mineru/ocr` 上传任意文档即可获得 markdown 结果，可被解读/检查流程复用
+
 ### 🚀 辅助功能
+
+#### 咨询中心
+- **AI 智能问答**: 基于知识库与招标文件，提供项目相关的政策、流程、规则问答
+- **多轮对话**: 支持上下文记忆，可逐步细化问题
+- **资料引用**: 回答中自动附带来源片段，便于追溯
+- **角色化回复**: 根据当前用户的角色给出不同视角的建议
 
 #### 资讯中心
 - **商机监控**: 定时抓取招投标网站最新公告
@@ -164,114 +194,6 @@ BidMaster Pro 是一个基于现代 AI 技术构建的全流程智能招投标�
 
 ---
 
-## 📁 项目结构
-
-```
-BidMaster-Pro/
-├── core/                          # 核心引擎层
-│   ├── agent_engine/              # Agent 编排引擎
-│   │   ├── orchestrator.py        # 工作流编排器 (LangGraph)
-│   │   ├── gate_keeper.py         # 闸门控制器 (阶段准入检查)
-│   │   └── state.py               # 状态管理
-│   ├── skill_engine/              # 技能引擎
-│   │   ├── base.py                # Skill 基类定义
-│   │   ├── registry.py            # 技能注册中心
-│   │   └── loader.py              # 技能加载器
-│   ├── rag_engine/                # RAG 检索增强引擎
-│   │   ├── vector_store.py        # 向量存储 (ChromaDB)
-│   │   ├── embedder.py            # 文本嵌入器
-│   │   └── retriever.py           # 检索器
-│   ├── llm_gateway/               # LLM 网关
-│   │   ├── gateway.py             # 统一 LLM 接口 (LiteLLM)
-│   │   └── json_repair.py         # JSON 修复引擎
-│   ├── doc_engine/                # 文档引擎
-│   │   ├── parsers/               # 文档解析器
-│   │   │   ├── pdf_parser.py      # PDF 解析
-│   │   │   ├── docx_parser.py     # Word 解析
-│   │   │   └── txt_parser.py      # 文本解析
-│   │   ├── section_detector.py    # 章节检测器
-│   │   └── onnx_classifier.py     # ONNX 文档分类
-│   ├── settings.py                # 全局配置
-│   └── exceptions.py              # 自定义异常
-│
-├── services/                      # 服务层
-│   ├── routers/                   # API 路由
-│   │   ├── projects.py            # 项目管理
-│   │   ├── interpret.py           # 招标解读
-│   │   ├── generate.py            # 投标生成
-│   │   ├── check.py               # 投标检查
-│   │   ├── format_doc.py          # 文档输出
-│   │   ├── skills.py              # Skill 管理
-│   │   ├── news.py                # 资讯中心
-│   │   ├── knowledge.py           # 知识库
-│   │   ├── rbac.py                # 权限管理
-│   │   └── ai_image.py            # AI 配图
-│   ├── interpret/skills/          # 解读技能
-│   │   ├── tender_interpret_skill.py
-│   │   ├── scoring_matrix_skill.py
-│   │   └── risk_alert_skill.py
-│   ├── generate/skills/           # 生成技能
-│   │   ├── outline_gen_skill.py
-│   │   ├── content_gen_skill.py
-│   │   └── structure_template_skill.py
-│   ├── check/skills/              # 检查技能 (21项)
-│   │   ├── compliance_check_skill.py
-│   │   ├── disqualification_check_skill.py
-│   │   ├── duplicate_check_skill.py
-│   │   ├── pricing_check_skill.py
-│   │   └── ... (共21个检查技能)
-│   ├── format/skills/             # 格式化技能
-│   │   ├── docx_format_skill.py
-│   │   └── pdf_export_skill.py
-│   ├── main.py                    # FastAPI 应用入口
-│   ├── models.py                  # 数据库模型 (SQLAlchemy)
-│   ├── database.py                # 数据库连接
-│   ├── celery_app.py              # Celery 配置
-│   └── skill_bootstrap.py         # 技能初始化
-│
-├── packages/desktop/              # 桌面客户端
-│   ├── main/                      # Electron 主进程
-│   ├── preload/                   # 预加载脚本
-│   └── renderer/                  # React 渲染进程
-│       ├── src/
-│       │   ├── pages/             # 页面组件
-│       │   │   ├── DashboardPage.tsx
-│       │   │   ├── InterpretPage.tsx
-│       │   │   ├── GeneratePage.tsx
-│       │   │   ├── CheckPage.tsx
-│       │   │   ├── FormatPage.tsx
-│       │   │   ├── NewsPage.tsx
-│       │   │   └── SettingsPage.tsx
-│       │   ├── components/        # 通用组件
-│       │   ├── services/          # API 服务
-│       │   ├── stores/            # Zustand 状态
-│       │   └── App.tsx            # 应用根组件
-│       └── index.html
-│
-├── skills/                        # Skill 定义文件 (Markdown)
-│   ├── check/compliance_check/SKILL.md
-│   ├── generate/content_gen/SKILL.md
-│   └── interpret/tender_interpret/SKILL.md
-│
-├── templates/                     # 文档模板
-│   └── default.yaml
-│
-├── db/                            # 数据库迁移和种子数据
-│   ├── migrations/
-│   └── seeds/
-│
-├── docker/                        # Docker 配置
-│   ├── Dockerfile.api
-│   └── docker-compose.yml
-│
-├── tests/                         # 测试文件
-├── .env.example                   # 环境变量示例
-├── pyproject.toml                 # Python 依赖配置
-└── alembic.ini                    # 数据库迁移配置
-```
-
----
-
 ## 🚀 快速开始
 
 ### 环境要求
@@ -284,96 +206,53 @@ BidMaster-Pro/
 
 ### 方式一：Docker 部署（推荐）
 
-#### 1. 克隆项目
-
 ```bash
+# 1. 克隆项目
 git clone <repository-url>
 cd BidMaster-Pro
-```
 
-#### 2. 配置环境变量
-
-```bash
+# 2. 配置环境变量
 cp .env.example .env
 # 编辑 .env 文件，填写 LLM API Key 等配置
-```
 
-#### 3. 启动服务
-
-```bash
+# 3. 启动服务
 docker-compose up -d
 ```
 
-这将启动以下服务：
-- PostgreSQL (端口 5432)
-- Redis (端口 6379)
-- MinIO (端口 9000, 控制台 9001)
-- FastAPI Server (端口 8000)
-- Celery Worker
-
-#### 4. 访问应用
+启动后自动运行：PostgreSQL (5432) / Redis (6379) / MinIO (9000) / FastAPI (8000) / Celery Worker
 
 - API 文档: http://localhost:8000/docs
 - MinIO 控制台: http://localhost:9001
 
 ### 方式二：本地开发
 
-#### 1. 安装依赖
-
-**后端依赖:**
 ```bash
-# 创建虚拟环境
+# 后端
 python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# 或
-venv\Scripts\activate     # Windows
-
-# 安装依赖
+source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -e .
-```
 
-**前端依赖:**
-```bash
+# 前端
 cd packages/desktop
 npm install
-```
 
-#### 2. 启动基础设施
-
-```bash
-# 使用 Docker 仅启动数据库和中间件
+# 启动基础设施
 docker-compose up -d postgres redis minio
-```
 
-#### 3. 配置环境变量
-
-```bash
+# 配置环境变量
 cp .env.example .env
-# 编辑 .env，至少配置以下内容：
-# BMP_LLM_API_KEY=your_api_key
-# BMP_DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/bidmaster
-# BMP_REDIS_URL=redis://localhost:6379/0
-```
+# 编辑 .env，至少配置 BMP_LLM_API_KEY / BMP_DATABASE_URL / BMP_REDIS_URL
 
-#### 4. 初始化数据库
-
-```bash
+# 初始化数据库
 alembic upgrade head
-```
 
-#### 5. 启动后端服务
-
-```bash
-# 终端 1: 启动 FastAPI
+# 启动后端
 uvicorn services.main:app --reload --host 0.0.0.0 --port 8000
 
-# 终端 2: 启动 Celery Worker
+# 启动 Celery Worker
 celery -A services.celery_app worker --loglevel=info
-```
 
-#### 6. 启动前端桌面应用
-
-```bash
+# 启动前端桌面应用
 cd packages/desktop
 npm run electron:dev
 ```
@@ -382,81 +261,42 @@ npm run electron:dev
 
 ## ⚙️ 配置说明
 
-### 环境变量
+### 核心环境变量
 
 | 变量名 | 说明 | 默认值 |
 |--------|------|--------|
 | `BMP_DEBUG` | 调试模式 | `true` |
-| `BMP_HOST` | 服务地址 | `0.0.0.0` |
 | `BMP_PORT` | 服务端口 | `8000` |
 | `BMP_DATABASE_URL` | PostgreSQL 连接串 | `postgresql+asyncpg://...` |
 | `BMP_REDIS_URL` | Redis 连接串 | `redis://localhost:6379/0` |
 | `BMP_CHROMA_DIR` | ChromaDB 存储路径 | `./chroma_db` |
-| `BMP_PROJECTS_ROOT` | 项目文件根目录 | `./projects` |
 | `BMP_LLM_DEFAULT_MODEL` | 默认 LLM 模型 | `deepseek/deepseek-chat` |
 | `BMP_LLM_API_KEY` | LLM API Key | - |
 | `BMP_LLM_API_BASE` | LLM API 地址 | `https://api.deepseek.com` |
 | `BMP_LLM_FALLBACK_MODES` | 降级模型列表 | `ollama/qwen2.5` |
 | `BMP_EMBEDDING_MODE` | 嵌入模式 (api/local) | `api` |
 | `BMP_EMBEDDING_MODEL` | 嵌入模型 | `text-embedding-v3` |
-| `BMP_EMBEDDING_API_KEY` | 嵌入 API Key | - |
+
+### MinerU OCR 配置
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `BMP_MINERU_MODE` | `cloud` (云端) 或 `self_hosted` (自部署) | `cloud` |
+| `BMP_MINERU_API_KEY` | 云端 API Key / 自部署 Token | - |
+| `BMP_MINERU_ENDPOINT` | 服务端点 | `https://mineru.net/api/v4` |
+| `BMP_MINERU_TIMEOUT` | 单次请求超时 (秒) | `180` |
+
+也可在 `平台设置 → MinerU OCR` Tab 页面化配置（自动写入 .env）。
 
 ### LLM 提供商支持
 
-通过 LiteLLM，系统支持多种 LLM 提供商：
+通过 LiteLLM 支持多种 LLM 提供商，可在平台设置中灵活切换：
 
 - **DeepSeek**: `deepseek/deepseek-chat`
+- **硅基流动**: `siliconflow/*`
 - **OpenAI**: `gpt-4`, `gpt-3.5-turbo`
-- **Anthropic**: `claude-3-opus`, `claude-3-sonnet`
 - **阿里云通义千问**: `qwen-max`, `qwen-plus`
 - **Ollama (本地)**: `ollama/qwen2.5`, `ollama/llama3`
-
-修改 `.env` 中的 `BMP_LLM_API_KEY` 和 `BMP_LLM_API_BASE` 即可切换。
-
----
-
-## 📖 API 文档
-
-启动服务后访问 http://localhost:8000/docs 查看完整的 OpenAPI 文档。
-
-### 主要 API 端点
-
-#### 项目管理
-- `POST /api/projects` - 创建项目
-- `GET /api/projects` - 获取项目列表
-- `GET /api/projects/{id}` - 获取项目详情
-- `DELETE /api/projects/{id}` - 删除项目
-
-#### 招标解读
-- `POST /api/interpret/upload` - 上传招标文件
-- `POST /api/interpret/analyze` - 执行智能分析
-- `GET /api/interpret/{project_id}/result` - 获取解读结果
-
-#### 投标生成
-- `POST /api/generate/outline` - 生成大纲
-- `POST /api/generate/chapter` - 生成章节内容
-- `POST /api/generate/expand` - 内容扩写
-
-#### 投标检查
-- `POST /api/check/run` - 执行检查
-- `GET /api/check/{project_id}/reports` - 获取检查报告
-- `POST /api/check/compliance` - 合规性检查
-- `POST /api/check/pricing` - 价格检查
-
-#### 文档输出
-- `POST /api/format/docx` - 生成 Word 文档
-- `POST /api/format/pdf` - 导出 PDF
-- `POST /api/format/apply-template` - 应用模板
-
-#### 资讯中心
-- `GET /api/news/list` - 获取新闻列表
-- `POST /api/news/crawl` - 手动触发爬取
-- `GET /api/news/tasks` - 获取监控任务
-
-#### 知识库
-- `POST /api/knowledge/upload` - 上传知识文档
-- `POST /api/knowledge/search` - 语义搜索
-- `GET /api/knowledge/collections` - 获取知识库列表
 
 ---
 
@@ -464,9 +304,7 @@ npm run electron:dev
 
 ### Skill (技能)
 
-Skill 是 BidMaster Pro 的核心扩展机制，每个 Skill 代表一个独立的业务能力单元。
-
-#### Skill 结构
+Skill 是核心扩展机制，每个 Skill 代表一个独立的业务能力单元：
 
 ```python
 from core.skill_engine.base import Skill, SkillContext, SkillResult
@@ -476,35 +314,11 @@ class MyCustomSkill(Skill):
     description = "我的自定义技能"
     category = "generate"
     version = "1.0.0"
-    
+
     async def execute(self, ctx: SkillContext) -> SkillResult:
-        # 1. 获取参数
         param1 = ctx.parameters.get("param1")
-        
-        # 2. 调用 LLM
         response = await ctx.llm.chat(messages=[...])
-        
-        # 3. 返回结果
-        return SkillResult(
-            success=True,
-            data={"result": response},
-            tokens_consumed=100
-        )
-```
-
-#### Skill 注册
-
-在 `services/skill_bootstrap.py` 中注册：
-
-```python
-def register_builtin_skills():
-    from core.skill_engine.registry import SkillRegistry
-    registry = SkillRegistry.instance()
-    
-    # 注册内置技能
-    registry.register(ComplianceCheckSkill)
-    registry.register(ContentGenSkill)
-    # ...
+        return SkillResult(success=True, data={"result": response}, tokens_consumed=100)
 ```
 
 ### Agent Pipeline (Agent 流水线)
@@ -538,215 +352,9 @@ if not gate_keeper.is_passed(project_id, "interpret"):
 
 ---
 
-## 🧪 测试
-
-```bash
-# 运行所有测试
-pytest tests/
-
-# 运行特定模块测试
-pytest tests/test_interpret.py
-
-# 带覆盖率报告
-pytest --cov=core --cov=services tests/
-```
-
----
-
-## 📊 数据库模型
-
-### 核心实体关系
-
-```
-User (用户)
-  └── Project (项目)
-        ├── Document (文档)
-        ├── Analysis (分析结果)
-        ├── Outline (大纲)
-        ├── Chapter[] (章节)
-        └── CheckReport[] (检查报告)
-
-KnowledgeBase (知识库)
-MonitoringTask (监控任务)
-  └── CrawlResult[] (爬取结果)
-
-RBACRole (角色) ↔ RBACPermission (权限)
-```
-
-详细模型定义见 [services/models.py](file:///E:/workspace-llm/biaoshu/BidMaster-Pro/services/models.py)
-
----
-
-## 🛠️ 开发指南
-
-### 添加新的 Skill
-
-1. **创建 Skill 类**
-
-```python
-# services/generate/skills/my_new_skill.py
-from core.skill_engine.base import Skill, SkillContext, SkillResult
-
-class MyNewSkill(Skill):
-    name = "my_new_skill"
-    description = "新功能描述"
-    category = "generate"
-    
-    async def execute(self, ctx: SkillContext) -> SkillResult:
-        # 实现逻辑
-        pass
-```
-
-2. **创建 SKILL.md 文档**
-
-```markdown
-# skills/generate/my_new_skill/SKILL.md
-
-## 功能说明
-...
-
-## 输入参数
-- param1: 描述
-
-## 输出格式
-{
-  "result": "..."
-}
-```
-
-3. **注册 Skill**
-
-在 `services/skill_bootstrap.py` 中添加：
-
-```python
-from services.generate.skills.my_new_skill import MyNewSkill
-registry.register(MyNewSkill)
-```
-
-4. **添加到 API 路由**
-
-在对应的 router 中调用该 Skill。
-
-### 代码规范
-
-- **Python**: 遵循 PEP 8，使用 `ruff` 进行 linting
-- **TypeScript**: 遵循项目 ESLint 配置
-- **提交信息**: 使用 Conventional Commits 规范
-
-```bash
-# 代码检查
-ruff check .
-ruff format .
-
-# 类型检查
-mypy core services
-```
-
----
-
-## 🐳 Docker 部署
-
-### 生产环境部署
-
-```bash
-# 构建镜像
-docker-compose build
-
-# 启动服务
-docker-compose up -d
-
-# 查看日志
-docker-compose logs -f api
-
-# 停止服务
-docker-compose down
-```
-
-### 环境变量配置
-
-创建 `docker-compose.override.yml`:
-
-```yaml
-version: "3.8"
-services:
-  api:
-    environment:
-      BMP_LLM_API_KEY: ${LLM_API_KEY}
-      BMP_LLM_API_BASE: https://api.your-provider.com
-      BMP_DEBUG: "false"
-```
-
----
-
-## 📈 性能优化
-
-### 数据库优化
-
-- 使用连接池 (SQLAlchemy AsyncEngine)
-- 为常用查询字段添加索引
-- 定期清理过期数据
-
-### 缓存策略
-
-- Redis 缓存 LLM 响应
-- 向量检索结果缓存
-- 静态资源 CDN 加速
-
-### 异步处理
-
-- 耗时操作通过 Celery 异步执行
-- 使用 WebSocket 推送进度
-- 批量操作使用并发控制
-
----
-
-## 🔒 安全考虑
-
-- **认证**: JWT Token 认证
-- **授权**: RBAC 细粒度权限控制
-- **数据加密**: 敏感字段加密存储
-- **API 限流**: 防止滥用
-- **输入验证**: Pydantic 模型验证
-- **CORS**: 跨域资源共享控制
-
----
-
-## 🤝 贡献指南
-
-欢迎贡献代码、报告问题或提出建议！
-
-1. Fork 本仓库
-2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 开启 Pull Request
-
----
-
 ## 📄 许可证
 
 本项目采用 MIT 许可证 - 详见 [LICENSE](LICENSE) 文件
-
----
-
-## 📞 联系方式
-
-- **项目主页**: [GitHub Repository]
-- **问题反馈**: [Issues]
-- **邮箱**: support@bidmaster.pro
-
----
-
-## 🙏 致谢
-
-感谢以下开源项目的支持：
-
-- [FastAPI](https://fastapi.tiangolo.com/)
-- [LangGraph](https://langchain-ai.github.io/langgraph/)
-- [LiteLLM](https://docs.litellm.ai/)
-- [ChromaDB](https://www.trychroma.com/)
-- [React](https://react.dev/)
-- [Electron](https://www.electronjs.org/)
 
 ---
 
@@ -754,6 +362,8 @@ services:
 
 **Made with ❤️ by BidMaster Team**
 
-⭐ 如果这个项目对你有帮助，请给我们一个 Star！
+🚀 全流程智能招投标 Agent · 4 阶段流水线 · 21 项合规检查 · 多 LLM 切换 · Skill 引擎 · RAG 知识库 · MinerU OCR · 商机监控
+
+⭐ 如果这个项目对你有帮助，**请给我们一个 Star！** ✨
 
 </div>

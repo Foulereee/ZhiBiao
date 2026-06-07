@@ -1,0 +1,57 @@
+# ===== 环境与密钥 =====
+.env
+.env.local
+.env.*.local
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# ===== 虚拟环境 =====
+venv/
+.venv/
+
+# ===== IDE =====
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ===== 操作系统 =====
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ===== 运行时数据 =====
+uploads/
+projects/
+chroma_db/
+
+# ===== Celery =====
+celerybeat-schedule
+celerybeat-schedule.pid
+
+# ===== 日志 =====
+*.log
+
+# ===== Node.js =====
+packages/desktop/node_modules/
+
+# ===== 临时测试文件 =====
+test_llm_gateway.py
+test_outline_gen.py
+
+# ===== 工具目录 =====
+/.codeartsdoer/
+/docs/
+/tests/
+

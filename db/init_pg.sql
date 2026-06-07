@@ -527,7 +527,7 @@ ON CONFLICT (role_id, permission_id) DO NOTHING;
 -- ============================================================
 
 INSERT INTO users (id, email, name, role, password_hash)
-VALUES ('00000000-0000-0000-0000-user00001', 'admin@bidmaster.pro', '系统管理员', 'admin', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/X4.VTtYqVqxqZ')
+VALUES ('00000000-0000-0000-0000-user00001', 'admin@bidmaster.pro', '系统管理员', 'admin', '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9')
 ON CONFLICT (email) DO NOTHING;
 
 -- 绑定管理员角色

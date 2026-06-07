@@ -28,6 +28,7 @@ def get_engine():
         if settings.db_type == "mysql":
             engine_kwargs["pool_recycle"] = 3600
             engine_kwargs["pool_pre_ping"] = True
+            engine_kwargs["connect_args"] = {"charset": "utf8mb4"}
         _engine = create_async_engine(database_url, **engine_kwargs)
     return _engine
 
