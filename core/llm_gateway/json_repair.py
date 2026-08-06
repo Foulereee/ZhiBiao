@@ -228,10 +228,8 @@ class JsonRepairEngine:
         text = text.rstrip()
         if text.endswith(','):
             text = text[:-1]
-        # Fix truncated string values: "key": "incomplete value -> "key": null
         text = re.sub(r':\s*"[^"]*$', ': null', text)
         text = re.sub(r':\s*$', ': null', text)
-        # Fix unclosed strings
         in_string = False
         escape_next = False
         for ch in text:
@@ -245,11 +243,14 @@ class JsonRepairEngine:
                 in_string = not in_string
         if in_string:
             text += '"'
+        text = re.sub(r'\{\s*$', '{}', text)
+        text = re.sub(r'\[\s*$', '[]', text)
+        text = re.sub(r'\{\s*"id":\s*"[^"]*"\s*,\s*$', '{}', text)
+        text = re.sub(r'\{\s*"id":\s*"[^"]*"\s*,\s*"title":\s*"[^"]*"\s*,?\s*$', '{}', text)
         open_braces = text.count("{") - text.count("}")
         open_brackets = text.count("[") - text.count("]")
         if open_braces == 0 and open_brackets == 0:
             return text
-        # Try different closing orders and return the first one that parses
         candidates = []
         for b_first in [True, False]:
             suffix = []
@@ -271,7 +272,6 @@ class JsonRepairEngine:
                         suffix.append("}")
                         ob -= 1
             candidates.append(text + "".join(suffix))
-        # Also try all-braces-first then all-brackets
         candidates.append(text + "}" * open_braces + "]" * open_brackets)
         candidates.append(text + "]" * open_brackets + "}" * open_braces)
         for candidate in candidates:
@@ -281,26 +281,31 @@ class JsonRepairEngine:
                     return candidate
             except (json.JSONDecodeError, Exception):
                 continue
-        # Fallback: just close everything
         return text + "}" * open_braces + "]" * open_brackets
 
     async def _llm_repair(self, broken_json: str, error: str, chat_fn: Callable) -> dict | None:
         """使用 LLM 修复损坏的 JSON。"""
+        is_truncated = broken_json.rstrip().endswith(("}", "]")) is False
+        if is_truncated and len(broken_json) > 4000:
+            system_content = (
+                "修复以下被截断的JSON。策略：保留已有的完整对象，丢弃最后一个不完整的对象，"
+                "然后正确闭合所有打开的括号。只输出修复后的合法JSON，不要解释。"
+            )
+        else:
+            system_content = (
+                "修复以下非法JSON。只输出修复后的合法JSON，不要解释。"
+                "如果JSON被截断，补全缺失部分使其完整。"
+            )
         messages = [
-            {
-                "role": "system",
-                "content": "修复以下非法JSON。只输出修复后的合法JSON，不要解释。如果JSON被截断，补全缺失部分使其完整。",
-            },
-            {
-                "role": "user",
-                "content": f"错误: {error}\n内容: {broken_json[:4000]}",
-            },
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": f"错误: {error}\n内容: {broken_json[:6000]}"},
         ]
         try:
             repaired_text = await chat_fn(
                 messages=messages,
                 temperature=0.1,
                 response_format={"type": "json_object"},
+                max_tokens=16384,
             )
             repaired_text = self.extract_json(repaired_text)
             result = json.loads(repaired_text)
