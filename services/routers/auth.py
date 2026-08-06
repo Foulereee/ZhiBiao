@@ -4,6 +4,7 @@ import hashlib
 import secrets
 import time
 
+import bcrypt
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -34,7 +35,15 @@ class TokenInfo(BaseModel):
 
 
 def _hash_password(password: str) -> str:
-    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def _verify_password(password: str, hashed: str) -> bool:
+    try:
+        return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
+    except (ValueError, TypeError):
+        # Fallback for legacy SHA256 hashes
+        return hashed == hashlib.sha256(password.encode("utf-8")).hexdigest()
 
 
 def _cleanup_sessions():
@@ -66,7 +75,7 @@ async def login(data: LoginRequest, db: AsyncSession = Depends(get_db)):
     if not user.password_hash:
         raise HTTPException(status_code=401, detail="该账户未设置密码，请联系管理员")
 
-    if user.password_hash != _hash_password(data.password):
+    if not _verify_password(data.password, user.password_hash):
         raise HTTPException(status_code=401, detail="邮箱或密码错误")
 
     token = secrets.token_hex(32)
@@ -106,17 +115,11 @@ async def login(data: LoginRequest, db: AsyncSession = Depends(get_db)):
 
 @router.get("/me")
 async def get_current_user_info(
-    token: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    session = verify_token(token)
-    if not session:
-        raise HTTPException(status_code=401, detail="未登录或会话已过期")
-
-    result = await db.execute(select(User).where(User.id == session["user_id"]))
-    user = result.scalar_one_or_none()
-    if not user:
-        raise HTTPException(status_code=401, detail="用户不存在")
+    from services.middleware.rbac_middleware import get_current_user
+    user = await get_current_user(request, db)
 
     ur_result = await db.execute(
         select(RBACUserRole.role_id).where(RBACUserRole.user_id == user.id)
@@ -141,32 +144,42 @@ async def get_current_user_info(
 
 
 @router.post("/logout")
-async def logout(token: str = ""):
-    if token and token in _sessions:
-        del _sessions[token]
+async def logout(request: Request, db: AsyncSession = Depends(get_db)):
+    from services.middleware.rbac_middleware import get_current_user
+    await get_current_user(request, db)
+
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:].strip()
+        if token and token in _sessions:
+            del _sessions[token]
     return {"success": True}
 
 
 @router.put("/change-password")
 async def change_password(
-    token: str,
-    old_password: str,
+    request: Request,
     new_password: str,
     db: AsyncSession = Depends(get_db),
 ):
+    from services.middleware.rbac_middleware import get_current_user
+    user = await get_current_user(request, db)
+
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="未登录")
+    token = auth_header[7:].strip()
     session = verify_token(token)
     if not session:
         raise HTTPException(status_code=401, detail="未登录或会话已过期")
 
-    result = await db.execute(select(User).where(User.id == session["user_id"]))
-    user = result.scalar_one_or_none()
-    if not user:
-        raise HTTPException(status_code=401, detail="用户不存在")
-
-    if user.password_hash != _hash_password(old_password):
-        raise HTTPException(status_code=400, detail="原密码错误")
+    if not new_password or len(new_password) < 6:
+        raise HTTPException(status_code=400, detail="新密码长度不能少于6位")
 
     user.password_hash = _hash_password(new_password)
     await db.flush()
 
-    return {"success": True}
+    if token in _sessions:
+        del _sessions[token]
+
+    return {"success": True, "message": "密码已修改，请重新登录"}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -122,6 +123,14 @@ class StructureTemplateSkill(Skill):
             selected = BID_STRUCTURES
         elif structure_type in BID_STRUCTURES:
             selected = {structure_type: BID_STRUCTURES[structure_type]}
+        elif "," in structure_type:
+            selected = {}
+            for part in structure_type.split(","):
+                part = part.strip()
+                if part in BID_STRUCTURES:
+                    selected[part] = BID_STRUCTURES[part]
+            if not selected:
+                return SkillResult(success=False, error=f"未找到有效的结构类型: {structure_type}")
         else:
             return SkillResult(success=False, error=f"未知结构类型: {structure_type}")
 

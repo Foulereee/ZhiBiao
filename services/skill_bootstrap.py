@@ -34,7 +34,12 @@ from services.check.skills.pricing_logic_check_skill import PricingLogicCheckSki
 from services.format.skills.docx_format_skill import DocxFormatSkill
 from services.format.skills.pdf_export_skill import PdfExportSkill
 from services.format.skills.revision_skill import RevisionSkill
+from services.format.skills.bid_docx_export_skill import BidDocxExportSkill
+from services.format.skills.doc_export_skill import DocExportSkill
+from services.format.skills.mineru_ocr_skill import MinerUOcrSkill
 from services.news.skills.news_crawler_skill import NewsCrawlerSkill, AISemanticFilterSkill, NotificationSkill
+from services.news.skills.industry_classify_skill import IndustryClassifySkill
+from services.news.skills.hotspot_aggregate_skill import HotspotAggregateSkill
 from services.generate.skills.ai_image_skill import AiImageSkill
 
 from core.skill_engine.registry import SkillRegistry
@@ -83,9 +88,14 @@ def register_builtin_skills():
     registry.register(DocxFormatSkill)
     registry.register(PdfExportSkill)
     registry.register(RevisionSkill)
+    registry.register(BidDocxExportSkill)
+    registry.register(DocExportSkill)
+    registry.register(MinerUOcrSkill)
 
     registry.register(NewsCrawlerSkill)
     registry.register(AISemanticFilterSkill)
     registry.register(NotificationSkill)
+    registry.register(IndustryClassifySkill)
+    registry.register(HotspotAggregateSkill)
 
     registry.register(AiImageSkill)

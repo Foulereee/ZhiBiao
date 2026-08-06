@@ -136,6 +136,18 @@ async def confirm_gate(
     return {"project_id": project_id, "stage": stage, "gate_passed": True}
 
 
+@router.delete("/{project_id}/gate/{stage}")
+async def reset_gate(
+    project_id: str,
+    stage: str,
+    current_user: User = Depends(get_current_user),
+):
+    from core.agent_engine.gate_keeper import GateKeeper
+    gk = GateKeeper()
+    gk.reset(project_id, stage)
+    return {"project_id": project_id, "stage": stage, "gate_passed": False}
+
+
 @router.get("/{project_id}/gate")
 async def list_gates(
     project_id: str,
@@ -143,5 +155,43 @@ async def list_gates(
 ):
     from core.agent_engine.gate_keeper import GateKeeper
     gk = GateKeeper()
-    passed = gk.list_passed_stages(project_id)
-    return {"project_id": project_id, "passed_stages": passed}
+    passed_stages = gk.list_passed_stages(project_id)
+
+    gate_definitions = [
+        {
+            "stage": "outline",
+            "label": "大纲审核",
+            "items": ["大纲结构完整性", "评分项覆盖对齐", "章节层级合理性"],
+        },
+        {
+            "stage": "generate",
+            "label": "正文审核",
+            "items": ["内容完整性", "一致性检查", "评分点响应"],
+        },
+        {
+            "stage": "check",
+            "label": "合规审核",
+            "items": ["废标项检查", "强制性要求响应", "资质证书核查"],
+        },
+        {
+            "stage": "format",
+            "label": "格式审核",
+            "items": ["排版规范性", "页码连续性", "目录生成"],
+        },
+    ]
+
+    gates = []
+    for gate_def in gate_definitions:
+        stage = gate_def["stage"]
+        is_passed = stage in passed_stages
+        gate_info = gk.get_gate_info(project_id, stage)
+        gates.append({
+            "stage": stage,
+            "label": gate_def["label"],
+            "status": "confirmed" if is_passed else "pending",
+            "items": gate_def["items"],
+            "reviewer": gate_info.get("reviewer", "") if gate_info else "",
+            "timestamp": gate_info.get("timestamp", "") if gate_info else "",
+        })
+
+    return {"project_id": project_id, "gates": gates}
