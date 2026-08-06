@@ -5,6 +5,17 @@ description = "BidMaster Pro - 全流程智能招投标平台"
 requires-python = ">=3.12"
 readme = "README.md"
 
+# 显式声明构建后端，避免 pip install . 行为不确定
+# （缺少本节时 pip 退回 setuptools 隐式行为，可能把不完整包写入 site-packages）
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+# 包发现规则：明确包含 services / core，避免自动发现遗漏子包（如 middleware）
+[tool.setuptools.packages.find]
+include = ["services*", "core*"]
+exclude = ["tests*", "docs*"]
+
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",

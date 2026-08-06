@@ -26,8 +26,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# 先只拷贝依赖声明，最大化利用层缓存
-COPY pyproject.toml ./
+# 先只拷贝依赖声明 + readme，最大化利用层缓存
+COPY pyproject.toml README.md ./
 
 # 安装生产依赖到独立 prefix（不装 dev 依赖），稍后只拷贝 site-packages
 RUN pip install --prefix=/install .
@@ -40,7 +40,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     TZ=Asia/Shanghai \
     BMP_HOST=0.0.0.0 \
-    BMP_PORT=8000
+    BMP_PORT=8000 \
+    # /app 优先于 site-packages，确保运行时用的是 COPY 进来的完整源码
+    # （避免 builder 阶段 pip install 残留的不完整包覆盖 /app 源码）
+    PYTHONPATH=/app
 
 # 运行期系统依赖：
 #   libpq5              — asyncpg 运行
