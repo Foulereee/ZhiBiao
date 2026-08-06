@@ -1,17 +1,21 @@
 # ============================================================================
 # BidMaster Pro - 完整 Docker 编排
 #
+# 部署模式：
+#   A) 全量部署（默认）：docker compose --profile infra up -d
+#      → 拉起 postgres/redis/minio + api/celery/web
+#   B) 仅API（外部依赖）：docker compose up -d
+#      → 只启动 api/celery-worker/celery-beat，直连外部 MySQL/Redis/MinIO
+#
 # 服务拓扑：
 #   postgres ──┐
 #   redis ─────┼──→ api ────→ (对外 8000)
 #   minio ─────┘    ├─ celery-worker
 #                   └─ celery-beat
-#   web ──nginx──→ api (可选，浏览器访问版)
+#   web ──nginx──→ api (可选，--profile web)
 #
 # 数据持久化卷：pgdata / redisdata / miniodata / projects / chroma / uploads
 # ============================================================================
-
-# 注：新版 compose 已无需 version 字段
 
 x-api-env: &api-env
   BMP_DEBUG: ${BMP_DEBUG:-false}
@@ -20,7 +24,9 @@ x-api-env: &api-env
   # ── 数据库类型：postgresql（默认）/ mysql ──
   # postgresql 时使用 BMP_DATABASE_URL；mysql 时使用 BMP_MYSQL_* 组合
   BMP_DB_TYPE: ${BMP_DB_TYPE:-postgresql}
-  BMP_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-bidmaster}
+  # BMP_DATABASE_URL 支持外部覆盖：设 BMP_DATABASE_URL 即可指向外部 PG
+  # 默认指向 compose 内 postgres 服务
+  BMP_DATABASE_URL: ${BMP_DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-bidmaster}}
   BMP_MYSQL_HOST: ${BMP_MYSQL_HOST:-mysql}
   BMP_MYSQL_PORT: ${BMP_MYSQL_PORT:-3306}
   BMP_MYSQL_USER: ${MYSQL_USER:-root}
@@ -28,13 +34,14 @@ x-api-env: &api-env
   BMP_MYSQL_DATABASE: ${MYSQL_DATABASE:-bidmaster}
   # 入口脚本等待超时（秒）
   DB_WAIT_TIMEOUT: 60
-  BMP_REDIS_URL: redis://redis:6379/0
-  CELERY_BROKER_URL: redis://redis:6379/1
-  CELERY_RESULT_BACKEND: redis://redis:6379/2
+  # Redis：REDIS_HOST 留空则用 compose 内 redis 服务名，设为外部 IP 则直连外部
+  BMP_REDIS_URL: redis://${REDIS_HOST:-redis}:${REDIS_INTERNAL_PORT:-6379}/0
+  CELERY_BROKER_URL: redis://${REDIS_HOST:-redis}:${REDIS_INTERNAL_PORT:-6379}/1
+  CELERY_RESULT_BACKEND: redis://${REDIS_HOST:-redis}:${REDIS_INTERNAL_PORT:-6379}/2
   BMP_CHROMA_DIR: /app/chroma_db
   BMP_PROJECTS_ROOT: /app/projects
-  # MinIO（compose 内服务名）
-  BMP_MINIO_ENDPOINT: minio:9000
+  # MinIO（默认 compose 内服务名 minio:9000，可覆盖为外部地址 host:port）
+  BMP_MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
   BMP_MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
   BMP_MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
   BMP_MINIO_BUCKET: ${MINIO_BUCKET:-bidmaster}
@@ -74,10 +81,11 @@ x-default-logging: &default-logging
     max-file: "5"
 
 services:
-  # ─────────────── PostgreSQL 16 ───────────────
+  # ─────────────── PostgreSQL 16（--profile infra 启用）───────────────
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    profiles: ["infra"]
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-bidmaster}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
@@ -86,7 +94,6 @@ services:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-      # 首次启动自动执行建表 + 种子数据（含默认管理员账号）
       - ./db/init_pg.sql:/docker-entrypoint-initdb.d/init_pg.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-bidmaster}"]
@@ -96,12 +103,11 @@ services:
       start_period: 10s
     logging: *default-logging
 
-  # ─────────────── MySQL 8（可选，--profile mysql 启用）───────────────
-  # 与 PostgreSQL 二选一：设 BMP_DB_TYPE=mysql 并使用此 profile
+  # ─────────────── MySQL 8（--profile infra + --profile mysql 启用）───────────────
   mysql:
     image: mysql:8.0
     restart: unless-stopped
-    profiles: ["mysql"]
+    profiles: ["infra", "mysql"]
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD:-root}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-bidmaster}
@@ -116,7 +122,6 @@ services:
       - "${MYSQL_PORT:-3306}:3306"
     volumes:
       - mysqldata:/var/lib/mysql
-      # 首次启动自动执行建表 + 种子数据
       - ./db/init_mysql.sql:/docker-entrypoint-initdb.d/init_mysql.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p${MYSQL_PASSWORD:-root} --silent"]
@@ -126,13 +131,14 @@ services:
       start_period: 30s
     logging: *default-logging
 
-  # ─────────────── Redis 7 ───────────────
+  # ─────────────── Redis 7（--profile infra 启用）───────────────
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    profiles: ["infra"]
     command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
     ports:
-      - "${REDIS_PORT:-16379}:6379"
+      - "${REDIS_EXTERNAL_PORT:-16379}:6379"
     volumes:
       - redisdata:/data
     healthcheck:
@@ -142,10 +148,11 @@ services:
       retries: 10
     logging: *default-logging
 
-  # ─────────────── MinIO 对象存储 ───────────────
+  # ─────────────── MinIO 对象存储（--profile infra 启用）───────────────
   minio:
     image: minio/minio:latest
     restart: unless-stopped
+    profiles: ["infra"]
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
@@ -163,9 +170,10 @@ services:
       start_period: 15s
     logging: *default-logging
 
-  # MinIO 初始化：创建 bucket（仅首次运行）
+  # MinIO 初始化：创建 bucket（仅首次运行，--profile infra 启用）
   minio-init:
     image: minio/mc:latest
+    profiles: ["infra"]
     depends_on:
       minio:
         condition: service_healthy
@@ -188,13 +196,15 @@ services:
     ports:
       - "${API_PORT:-8000}:8000"
     environment: *api-env
+    # 弱依赖：compose 内有 infra 服务时等其启动，无则跳过（直连外部）
+    # 数据库/Redis/MinIO 就绪由 entrypoint.sh 统一等待
     depends_on:
       redis:
-        condition: service_healthy
+        condition: service_started
+        required: false
       minio:
-        condition: service_healthy
-    # 注：数据库（postgres/mysql）由 entrypoint.sh 按 BMP_DB_TYPE 等待，
-    #     此处不写死 depends_on，以支持 PG/MySQL 二选一
+        condition: service_started
+        required: false
     volumes: *api-volumes
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/health"]
@@ -219,8 +229,8 @@ services:
     environment: *api-env
     depends_on:
       redis:
-        condition: service_healthy
-    # 数据库由 entrypoint.sh 等待，支持 PG/MySQL
+        condition: service_started
+        required: false
     volumes: *api-volumes
     deploy:
       resources:
@@ -239,7 +249,8 @@ services:
     environment: *api-env
     depends_on:
       redis:
-        condition: service_healthy
+        condition: service_started
+        required: false
     volumes:
       - celerybeat:/app/celerybeat
     deploy:
@@ -249,8 +260,6 @@ services:
     logging: *default-logging
 
   # ─────────────── Web 前端（可选，浏览器访问版）───────────────
-  # 说明：Electron 桌面客户端通过 electron-builder 打包分发，不走 Docker。
-  #       此服务提供浏览器访问能力，nginx 托管静态资源 + 反代 API。
   web:
     build:
       context: ..
@@ -262,7 +271,7 @@ services:
     depends_on:
       api:
         condition: service_healthy
-    profiles: ["web"]   # 默认不启动，需 --profile web 才启用
+    profiles: ["web"]
     logging: *default-logging
 
 volumes:
