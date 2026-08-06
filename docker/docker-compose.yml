@@ -29,8 +29,8 @@ x-api-env: &api-env
   BMP_DATABASE_URL: ${BMP_DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-bidmaster}}
   BMP_MYSQL_HOST: ${BMP_MYSQL_HOST:-mysql}
   BMP_MYSQL_PORT: ${BMP_MYSQL_PORT:-3306}
-  BMP_MYSQL_USER: ${MYSQL_USER:-root}
-  BMP_MYSQL_PASSWORD: ${MYSQL_PASSWORD:-root}
+  BMP_MYSQL_USER: ${MYSQL_USER:-bidmaster}
+  BMP_MYSQL_PASSWORD: ${MYSQL_PASSWORD:-bidmaster123}
   BMP_MYSQL_DATABASE: ${MYSQL_DATABASE:-bidmaster}
   # 入口脚本等待超时（秒）
   DB_WAIT_TIMEOUT: 60
@@ -109,10 +109,10 @@ services:
     restart: unless-stopped
     profiles: ["infra", "mysql"]
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD:-root}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-bidmaster}
       MYSQL_USER: ${MYSQL_USER:-bidmaster}
-      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:-bidmaster123}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-bidmaster123}
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
@@ -124,7 +124,7 @@ services:
       - mysqldata:/var/lib/mysql
       - ./db/init_mysql.sql:/docker-entrypoint-initdb.d/init_mysql.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p${MYSQL_PASSWORD:-root} --silent"]
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p${MYSQL_ROOT_PASSWORD:-root} --silent"]
       interval: 5s
       timeout: 10s
       retries: 10

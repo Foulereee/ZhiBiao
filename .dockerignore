@@ -73,7 +73,7 @@ test_outline_gen.py
 # 仅排除 compose 编排文件，Dockerfile/entrypoint.sh/nginx.conf 需被 COPY 入镜像
 docker/docker-compose*.yml
 docker/.env.docker*
-docker/DEPLOY.md
+docker/DEPLOY*.md
 
 # ===== 桌面端构建产物 =====
 packages/app/dist/

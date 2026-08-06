@@ -24,14 +24,14 @@ wait_for() {
     sleep 2
     i=$((i + 2))
   done
-  echo "[entrypoint] 警告：等待 ${name} 超时（${WAIT_TIMEOUT}s），继续启动（后端将以降级模式运行）"
-  return 0
+  echo "[entrypoint] 警告：等待 ${name} 超时（${WAIT_TIMEOUT}s）"
+  return 1
 }
 
-# ── 等待数据库 ──
+# ── 等待数据库（必需：超时则终止启动）──
 case "$DB_TYPE" in
   mysql)
-    wait_for "${BMP_MYSQL_HOST:-mysql}" "${BMP_MYSQL_PORT:-3306}" "MySQL"
+    wait_for "${BMP_MYSQL_HOST:-mysql}" "${BMP_MYSQL_PORT:-3306}" "MySQL" || { echo "[entrypoint] MySQL 不可达，终止启动"; exit 1; }
     ;;
   postgresql|postgres|pg|*)
     pg_host="postgres"
@@ -44,7 +44,7 @@ case "$DB_TYPE" in
         [ -z "$pg_port" ] && pg_port="5432"
       fi
     fi
-    wait_for "$pg_host" "$pg_port" "PostgreSQL"
+    wait_for "$pg_host" "$pg_port" "PostgreSQL" || { echo "[entrypoint] PostgreSQL 不可达，终止启动"; exit 1; }
     ;;
 esac
 
@@ -61,7 +61,7 @@ if [ -n "$BMP_REDIS_URL" ]; then
     [ -z "$redis_port" ] && redis_port="6379"
   fi
 fi
-wait_for "$redis_host" "$redis_port" "Redis"
+wait_for "$redis_host" "$redis_port" "Redis" || echo "[entrypoint] Redis 不可达，以降级模式继续"
 
 # ── 等待 MinIO ──
 # 从 BMP_MINIO_ENDPOINT 解析 host:port
@@ -72,7 +72,7 @@ if [ -n "$BMP_MINIO_ENDPOINT" ]; then
   minio_port=$(echo "$BMP_MINIO_ENDPOINT" | cut -d: -f2)
   [ -z "$minio_port" ] && minio_port="9000"
 fi
-wait_for "$minio_host" "$minio_port" "MinIO"
+wait_for "$minio_host" "$minio_port" "MinIO" || echo "[entrypoint] MinIO 不可达，以降级模式继续"
 
 echo "[entrypoint] 所有依赖就绪，启动主进程：$@"
 exec "$@"
