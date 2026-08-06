@@ -29,7 +29,7 @@ WORKDIR /app
 # 先只拷贝依赖声明 + readme，最大化利用层缓存
 COPY pyproject.toml README.md ./
 
-# 安装生产依赖到独立 prefix（不装 dev 依赖），稍后只拷贝 site-packages
+# 安装生产依赖到独立 prefix
 RUN pip install --prefix=/install .
 
 
@@ -74,6 +74,12 @@ WORKDIR /app
 
 # 从 builder 拷贝已安装的 Python 依赖
 COPY --from=builder /install /usr/local
+
+# 删除 site-packages 中 pip install 产生的项目包（services/core），
+# 避免不完整安装覆盖 /app 下的完整源码
+RUN rm -rf /usr/local/lib/python3.12/site-packages/services \
+           /usr/local/lib/python3.12/site-packages/core \
+           /usr/local/lib/python3.12/site-packages/bidmaster_pro*
 
 # 拷贝应用源码（.dockerignore 会过滤掉 venv/node_modules/数据目录等）
 COPY --chown=app:app . .
