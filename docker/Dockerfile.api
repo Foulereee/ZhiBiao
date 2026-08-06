@@ -36,13 +36,13 @@ RUN pip install --prefix=/install .
 # ─────────────── Stage 2: runtime ───────────────
 FROM python:3.12-slim AS runtime
 
+# PYTHONPATH=/app 确保 /app 完整源码优先于 site-packages
+# （避免 builder 阶段 pip install . 残留的不完整 services 包覆盖 /app 源码）
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     TZ=Asia/Shanghai \
     BMP_HOST=0.0.0.0 \
     BMP_PORT=8000 \
-    # /app 优先于 site-packages，确保运行时用的是 COPY 进来的完整源码
-    # （避免 builder 阶段 pip install 残留的不完整包覆盖 /app 源码）
     PYTHONPATH=/app
 
 # 运行期系统依赖：
@@ -83,6 +83,13 @@ RUN rm -rf /usr/local/lib/python3.12/site-packages/services \
 
 # 拷贝应用源码（.dockerignore 会过滤掉 venv/node_modules/数据目录等）
 COPY --chown=app:app . .
+
+# 验证关键模块确实已拷入镜像（防止 .dockerignore/上下文缓存问题）
+RUN test -f /app/services/middleware/api_key.py \
+    || (echo "FATAL: /app/services/middleware/api_key.py 未拷入镜像" \
+        && echo "--- /app/services/middleware/ 内容: ---" \
+        && ls -la /app/services/middleware/ 2>/dev/null || echo "(目录不存在)" \
+        && exit 1)
 
 # 拷贝入口脚本（按 BMP_DB_TYPE 等待对应数据库就绪）
 COPY --chown=app:app docker/entrypoint.sh /entrypoint.sh
