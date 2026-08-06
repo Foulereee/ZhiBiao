@@ -47,7 +47,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 #   libjpeg62-turbo     — Pillow/pymupdf 运行
 #   libgomp1            — onnxruntime（chromadb embedding）
 #   libgl1              — 部分 PDF/图像处理
-#   libpango-1.0-0 libpangoft2-1.0-0 libcairo2 libgdk-pixbuf2.0-0 — weasyprint
+#   libpango-1.0-0 libpangoft2-1.0-0 libcairo2 libgdk-pixbuf-xlib-2.0-0 — weasyprint
 #   curl                — healthcheck
 #   tzdata              — 时区
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -58,7 +58,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libpango-1.0-0 \
         libpangoft2-1.0-0 \
         libcairo2 \
-        libgdk-pixbuf2.0-0 \
+        libgdk-pixbuf-xlib-2.0-0 \
         curl \
         tzdata \
     && ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
