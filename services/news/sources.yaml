@@ -1,0 +1,314 @@
+# 招投标行业预置数据源
+# 配置参考 article-generation-skill 的 sources.yaml
+# type: rss / api / crawl
+# weight: 综合权重 (0-1),影响评分
+# enabled: 是否启用,管理员可在 UI 修改
+
+government_procurement:
+  - name: "中国政府采购网-中央公告"
+    code: "ccgp_central"
+    type: "rss"
+    url: "http://www.ccgp.gov.cn/cggg/dfgg/rss.xml"
+    industry: "04"
+    weight: 1.0
+    enabled: true
+    description: "中央国家机关政府采购公告"
+  - name: "中国政府采购网-地方公告"
+    code: "ccgp_local"
+    type: "rss"
+    url: "http://www.ccgp.gov.cn/cggg/dfgg/rss_local.xml"
+    industry: "04"
+    weight: 0.9
+    enabled: true
+    description: "地方各级政府采购公告"
+  - name: "中国政府采购网-变更公告"
+    code: "ccgp_change"
+    type: "rss"
+    url: "http://www.ccgp.gov.cn/cggg/dfgg/rss_change.xml"
+    industry: "04"
+    weight: 0.8
+    enabled: true
+    description: "采购公告变更/更正信息"
+
+engineering:
+  - name: "全国公共资源交易平台"
+    code: "ggzy_national"
+    type: "rss"
+    url: "https://www.ggzy.gov.cn/rss.xml"
+    industry: "01"
+    weight: 1.0
+    enabled: true
+    description: "国家级公共资源交易信息"
+  - name: "北京市公共资源交易服务平台"
+    code: "ggzy_bj"
+    type: "rss"
+    url: "https://www.bjggzy.com/rss"
+    industry: "01"
+    weight: 0.9
+    enabled: true
+  - name: "上海市公共资源交易中心"
+    code: "ggzy_sh"
+    type: "rss"
+    url: "https://www.sggzy.com/rss"
+    industry: "01"
+    weight: 0.9
+    enabled: true
+  - name: "广东省公共资源交易中心"
+    code: "ggzy_gd"
+    type: "rss"
+    url: "https://www.gdggzy.com/rss"
+    industry: "01"
+    weight: 0.9
+    enabled: true
+  - name: "江苏省公共资源交易平台"
+    code: "ggzy_js"
+    type: "rss"
+    url: "https://www.jszwfw.gov.cn/rss"
+    industry: "01"
+    weight: 0.85
+    enabled: true
+  - name: "浙江省公共资源交易中心"
+    code: "ggzy_zj"
+    type: "rss"
+    url: "https://www.ggzy.zj.gov.cn/rss"
+    industry: "01"
+    weight: 0.85
+    enabled: true
+  - name: "山东省公共资源交易中心"
+    code: "ggzy_sd"
+    type: "rss"
+    url: "https://www.sdggzyjy.gov.cn/rss"
+    industry: "01"
+    weight: 0.8
+    enabled: true
+
+tender_service:
+  - name: "中国招标投标公共服务平台"
+    code: "cebpubservice"
+    type: "rss"
+    url: "https://www.cebpubservice.com/rss.xml"
+    industry: "01"
+    weight: 1.0
+    enabled: true
+    description: "国家级招标投标信息公共服务"
+  - name: "比比招标采购网"
+    code: "ebidding"
+    type: "crawl"
+    url: "https://www.ebidding.com/notice"
+    industry: "01"
+    weight: 0.8
+    enabled: true
+  - name: "千里马招标网"
+    code: "qianlima"
+    type: "crawl"
+    url: "https://www.qianlima.com/zb"
+    industry: "01"
+    weight: 0.7
+    enabled: true
+  - name: "招标网"
+    code: "zhaobiao"
+    type: "crawl"
+    url: "https://www.zhaobiao.cn"
+    industry: "01"
+    weight: 0.7
+    enabled: true
+
+enterprise_tender:
+  - name: "中国移动采购与招标网"
+    code: "chinamobile"
+    type: "rss"
+    url: "https://b2b.10086.cn/b2b/main/rss.html"
+    industry: "10"
+    weight: 0.9
+    enabled: true
+  - name: "中国联通采购与招标网"
+    code: "chinaunicom"
+    type: "rss"
+    url: "https://www.chinaunicom.com.cn/news/rss"
+    industry: "10"
+    weight: 0.9
+    enabled: true
+  - name: "中国电信采购平台"
+    code: "chinatelecom"
+    type: "crawl"
+    url: "https://caigou.chinatelecom.com.cn"
+    industry: "10"
+    weight: 0.85
+    enabled: true
+  - name: "国家电网电子商务平台"
+    code: "sgcc"
+    type: "crawl"
+    url: "https://ecp.sgcc.com.cn"
+    industry: "05"
+    weight: 0.95
+    enabled: true
+  - name: "南方电网电子商务平台"
+    code: "csg"
+    type: "crawl"
+    url: "https://ecp.csg.cn"
+    industry: "05"
+    weight: 0.9
+    enabled: true
+  - name: "中国华电集团采购平台"
+    code: "chd"
+    type: "crawl"
+    url: "https://www.chd.com.cn"
+    industry: "05"
+    weight: 0.8
+    enabled: true
+
+github_monitor:
+  - name: "GitHub Trending 招投标"
+    code: "github_tender"
+    type: "api"
+    url: "https://api.github.com/search/repositories"
+    industry: "00"
+    weight: 0.5
+    enabled: true
+    config:
+      languages: ["python", "typescript"]
+      topics: ["tender", "bidding", "procurement"]
+      min_stars: 5
+      max_results: 20
+
+# ============================================================
+# 通用资讯源 (借鉴 ai-content-publisher sources.yaml)
+# 为"今日热点" / "聚合分析" 提供 AI/科技/财经等补充信息
+# 行业代码 12 = 综合 (IndustryClassifySkill 会根据关键词二次归类)
+# ============================================================
+general_news:
+  # 中文 AI 媒体 (来自 ai-content-publisher)
+  - name: "机器之心"
+    code: "jiqizhixin"
+    type: "rss"
+    url: "https://www.jiqizhixin.com/rss"
+    industry: "12"
+    weight: 1.0
+    enabled: true
+    description: "专业人工智能媒体"
+  - name: "量子位"
+    code: "qbitai"
+    type: "rss"
+    url: "https://www.qbitai.com/feed"
+    industry: "12"
+    weight: 1.0
+    enabled: true
+    description: "AI 前沿资讯"
+  - name: "新智元"
+    code: "xinzhiyuan"
+    type: "rss"
+    url: "https://www.aiust.com/rss"
+    industry: "12"
+    weight: 0.9
+    enabled: true
+    description: "AI 与产业资讯"
+  - name: "AI科技评论"
+    code: "aitechreview"
+    type: "rss"
+    url: "https://www.leiphone.com/category/ai/feed"
+    industry: "12"
+    weight: 0.9
+    enabled: true
+    description: "AI 产业评论"
+
+  # 国内 AI 公司博客 (来自 ai-content-publisher)
+  - name: "智谱AI"
+    code: "zhipuai_blog"
+    type: "rss"
+    url: "https://www.zhipuai.cn/blog/rss"
+    industry: "12"
+    weight: 1.0
+    enabled: true
+  - name: "月之暗面(Kimi)"
+    code: "moonshot_blog"
+    type: "rss"
+    url: "https://www.moonshot.cn/blog/rss"
+    industry: "12"
+    weight: 1.0
+    enabled: true
+  - name: "百川智能"
+    code: "baichuan_blog"
+    type: "rss"
+    url: "https://www.baichuan-ai.com/blog/rss"
+    industry: "12"
+    weight: 0.9
+    enabled: true
+  - name: "阶跃星辰"
+    code: "stepfun_blog"
+    type: "rss"
+    url: "https://www.stepfun.com/blog/rss"
+    industry: "12"
+    weight: 0.9
+    enabled: true
+
+  # 国外 AI 公司 (来自 ai-content-publisher)
+  - name: "OpenAI Blog"
+    code: "openai_blog"
+    type: "rss"
+    url: "https://openai.com/blog/rss.xml"
+    industry: "12"
+    weight: 1.0
+    enabled: true
+  - name: "Cohere Blog"
+    code: "cohere_blog"
+    type: "rss"
+    url: "https://cohere.com/blog/rss"
+    industry: "12"
+    weight: 0.9
+    enabled: true
+  - name: "Hugging Face Blog"
+    code: "hf_blog"
+    type: "rss"
+    url: "https://huggingface.co/blog/feed.xml"
+    industry: "12"
+    weight: 1.0
+    enabled: true
+
+  # 科技媒体 (来自 ai-content-publisher, 启用可用的)
+  - name: "MIT Technology Review"
+    code: "mit_techreview"
+    type: "rss"
+    url: "https://www.technologyreview.com/feed/"
+    industry: "12"
+    weight: 0.8
+    enabled: true
+  - name: "TechCrunch AI"
+    code: "techcrunch_ai"
+    type: "rss"
+    url: "https://techcrunch.com/category/artificial-intelligence/feed/"
+    industry: "12"
+    weight: 0.6
+    enabled: true
+  - name: "The Batch (DeepLearning.AI)"
+    code: "thebatch"
+    type: "rss"
+    url: "https://www.deeplearning.ai/the-batch/feed/"
+    industry: "12"
+    weight: 0.9
+    enabled: true
+  - name: "Towards Data Science"
+    code: "tds"
+    type: "rss"
+    url: "https://towardsdatascience.com/feed"
+    industry: "12"
+    weight: 1.0
+    enabled: true
+
+  # 通用新闻列表页 (借鉴 AIMedia spider_all.py)
+  # type=crawl: 走 NewsCrawlerSkill 的"列表+详情"双步抓取
+  - name: "澎湃新闻-财经"
+    code: "pengpai_finance"
+    type: "crawl"
+    url: "https://www.thepaper.cn/channel_25950"
+    industry: "12"
+    weight: 0.7
+    enabled: false  # 默认关闭,避免通用新闻刷屏
+    description: "澎湃新闻财经频道"
+  - name: "网易新闻-科技"
+    code: "netease_tech"
+    type: "crawl"
+    url: "https://tech.163.com"
+    industry: "12"
+    weight: 0.7
+    enabled: false
+    description: "网易科技"
