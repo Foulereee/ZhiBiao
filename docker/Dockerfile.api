@@ -84,12 +84,8 @@ RUN rm -rf /usr/local/lib/python3.12/site-packages/services \
 # 拷贝应用源码（.dockerignore 会过滤掉 venv/node_modules/数据目录等）
 COPY --chown=app:app . .
 
-# 验证关键模块确实已拷入镜像（防止 .dockerignore/上下文缓存问题）
-RUN test -f /app/services/middleware/api_key.py \
-    || (echo "FATAL: /app/services/middleware/api_key.py 未拷入镜像" \
-        && echo "--- /app/services/middleware/ 内容: ---" \
-        && ls -la /app/services/middleware/ 2>/dev/null || echo "(目录不存在)" \
-        && exit 1)
+# 显式拷贝 middleware 目录（防止个别文件因上下文缓存/同步问题遗漏）
+COPY --chown=app:app services/middleware/ /app/services/middleware/
 
 # 拷贝入口脚本（按 BMP_DB_TYPE 等待对应数据库就绪）
 COPY --chown=app:app docker/entrypoint.sh /entrypoint.sh

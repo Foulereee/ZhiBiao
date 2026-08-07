@@ -71,8 +71,8 @@ x-api-volumes: &api-volumes
   - projects:/app/projects
   - chroma:/app/chroma_db
   - uploads:/app/uploads
-  - ./skills:/app/skills:ro
-  - ./templates:/app/templates:ro
+  - ../skills:/app/skills:ro
+  - ../templates:/app/templates:ro
 
 x-default-logging: &default-logging
   driver: json-file
@@ -94,7 +94,7 @@ services:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./db/init_pg.sql:/docker-entrypoint-initdb.d/init_pg.sql:ro
+      - ../db/init_pg.sql:/docker-entrypoint-initdb.d/init_pg.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-bidmaster}"]
       interval: 5s
@@ -122,7 +122,7 @@ services:
       - "${MYSQL_PORT:-3306}:3306"
     volumes:
       - mysqldata:/var/lib/mysql
-      - ./db/init_mysql.sql:/docker-entrypoint-initdb.d/init_mysql.sql:ro
+      - ../db/init_mysql.sql:/docker-entrypoint-initdb.d/init_mysql.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p${MYSQL_ROOT_PASSWORD:-root} --silent"]
       interval: 5s
