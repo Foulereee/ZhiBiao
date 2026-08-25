@@ -172,6 +172,7 @@ async def list_providers():
         {"id": "zhipu", "name": "智谱AI", "models": ["glm-4-plus", "glm-4-flash"]},
         {"id": "qianfan", "name": "百度千帆", "models": ["ernie-4.0", "ernie-3.5"]},
         {"id": "dashscope", "name": "阿里百炼", "models": ["qwen-max", "qwen-plus", "qwen-turbo"]},
+        {"id": "siliconflow", "name": "硅基流动", "models": ["deepseek-ai/DeepSeek-V3", "deepseek-ai/DeepSeek-R1", "Qwen/Qwen2.5-72B-Instruct", "Qwen/Qwen2.5-32B-Instruct", "THUDM/glm-4-9b-chat"]},
         {"id": "ollama", "name": "Ollama(本地)", "models": ["qwen2.5", "llama3.1", "mistral"]},
         {"id": "openai", "name": "OpenAI", "models": ["gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"]},
     ]}
@@ -185,6 +186,8 @@ async def test_connection(config: dict):
         gateway = LLMGateway({
             "providers": [{"api_key": config.get("api_key", ""), "api_base": config.get("api_base", "")}],
             "default_model": model,
+            "fallback_models": [],
+            "max_retries": 1,
         })
         result = await gateway.chat(
             messages=[{"role": "user", "content": "你好，请回复'连接成功'"}],

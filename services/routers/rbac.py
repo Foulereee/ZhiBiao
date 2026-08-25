@@ -261,16 +261,17 @@ async def list_permissions(db: AsyncSession = Depends(get_db)):
     )
     perms = result.scalars().all()
 
-    grouped: dict[str, list[dict]] = defaultdict(list)
+    flat_perms = []
     for p in perms:
-        grouped[p.category].append({
+        flat_perms.append({
             "id": str(p.id),
             "code": p.code,
             "name": p.name,
             "description": p.description,
+            "category": p.category,
         })
 
-    return {"permissions": dict(grouped)}
+    return {"permissions": flat_perms}
 
 
 @router.post("/roles/{role_id}/permissions")

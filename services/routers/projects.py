@@ -7,7 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from services.database import get_db
-from services.models import Project, ProjectStatus, Document, DocumentType
+from services.models import Project, ProjectStatus, Document, DocumentType, User
+from services.middleware.rbac_middleware import get_current_user, require_permission
 
 router = APIRouter()
 
@@ -16,8 +17,15 @@ ALLOWED_EXTENSIONS = {".pdf", ".docx", ".doc", ".txt", ".wps", ".md"}
 
 
 @router.get("/")
-async def list_projects(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Project).order_by(Project.created_at.desc()))
+async def list_projects(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(Project)
+        .where(Project.user_id == current_user.id)
+        .order_by(Project.created_at.desc())
+    )
     projects = result.scalars().all()
     return {"projects": [
         {
@@ -34,9 +42,10 @@ async def list_projects(db: AsyncSession = Depends(get_db)):
 async def create_project(
     name: str,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission("project.create")),
     tender_file: UploadFile | None = File(None),
 ):
-    project = Project(name=name, status=ProjectStatus.CREATED.value)
+    project = Project(name=name, status=ProjectStatus.CREATED.value, user_id=current_user.id)
     db.add(project)
     await db.flush()
 
@@ -61,22 +70,29 @@ async def create_project(
             file_size=len(content),
         )
         db.add(doc)
+        await db.flush()
         project.tender_doc_id = doc.id
 
     await db.flush()
     return {
         "project_id": str(project.id),
         "name": project.name,
-        "status": project.status.value,
+        "status": project.status if isinstance(project.status, str) else project.status.value,
     }
 
 
 @router.get("/{project_id}")
-async def get_project(project_id: str, db: AsyncSession = Depends(get_db)):
+async def get_project(
+    project_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
+    if project.user_id != current_user.id and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="无权访问该项目")
     return {
         "id": str(project.id),
         "name": project.name,
@@ -91,21 +107,29 @@ async def update_project_status(
     project_id: str,
     status: str,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission("project.update")),
 ):
     result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
+    if project.user_id != current_user.id and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="无权修改该项目")
     try:
-        project.status = ProjectStatus(status)
+        project.status = ProjectStatus(status).value
     except ValueError:
         raise HTTPException(status_code=400, detail=f"无效状态: {status}")
     await db.flush()
-    return {"project_id": str(project.id), "status": project.status.value}
+    return {"project_id": str(project.id), "status": project.status}
 
 
 @router.post("/{project_id}/gate/{stage}")
-async def confirm_gate(project_id: str, stage: str, reviewer: str = "user"):
+async def confirm_gate(
+    project_id: str,
+    stage: str,
+    reviewer: str = "user",
+    current_user: User = Depends(get_current_user),
+):
     from core.agent_engine.gate_keeper import GateKeeper
     gk = GateKeeper()
     gk.mark_passed(project_id, stage, reviewer)
@@ -113,7 +137,10 @@ async def confirm_gate(project_id: str, stage: str, reviewer: str = "user"):
 
 
 @router.get("/{project_id}/gate")
-async def list_gates(project_id: str):
+async def list_gates(
+    project_id: str,
+    current_user: User = Depends(get_current_user),
+):
     from core.agent_engine.gate_keeper import GateKeeper
     gk = GateKeeper()
     passed = gk.list_passed_stages(project_id)

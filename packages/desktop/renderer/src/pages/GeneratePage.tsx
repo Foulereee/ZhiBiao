@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { PenTool, Loader2, ListTree, FileText, AlertTriangle, Shield, Play, Download, ChevronRight, ChevronDown, GripVertical, Plus, Trash2, Edit3, Check, X, ImageIcon } from 'lucide-react';
+import { PenTool, Loader2, ListTree, FileText, AlertTriangle, Shield, Play, Download, ChevronRight, ChevronDown, GripVertical, Plus, Trash2, Edit3, Check, X, ImageIcon, Copy, CheckCircle2, Info } from 'lucide-react';
 import { generateApi, projectApi, aiImageApi, type Project, type OutlineNode, type GateInfo } from '../services/api';
 import { useAppStore } from '../stores/appStore';
 import StepHeader from '../components/common/StepHeader';
@@ -11,6 +11,48 @@ const STRUCTURE_TEMPLATES = [
   { key: 'commercial', label: '商务标', desc: '报价+预算+成本分析' },
   { key: 'service', label: '售后服务', desc: '服务承诺+培训+应急+质保' },
 ];
+
+function CopyableJson({ data, maxheight = '200px' }: { data: unknown; maxheight?: string }) {
+  const [copied, setCopied] = useState(false);
+  const jsonStr = JSON.stringify(data, null, 2);
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(jsonStr);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      const textarea = document.createElement('textarea');
+      textarea.value = jsonStr;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+  return (
+    <div style={{ position: 'relative' }}>
+      <button
+        onClick={handleCopy}
+        style={{
+          position: 'absolute', top: '8px', right: '8px', zIndex: 1,
+          padding: '4px 8px', background: copied ? '#ecfdf5' : 'white',
+          border: `1px solid ${copied ? '#a7f3d0' : 'var(--color-border)'}`,
+          borderRadius: '4px', cursor: 'pointer', fontSize: '11px',
+          display: 'flex', alignItems: 'center', gap: '4px',
+          color: copied ? '#059669' : '#64748b',
+        }}
+      >
+        {copied ? <CheckCircle2 size={12} /> : <Copy size={12} />}
+        {copied ? '已复制' : '复制'}
+      </button>
+      <pre style={{ background: '#f8fafc', padding: '12px', borderRadius: '8px', fontSize: '11px', overflow: 'auto', maxHeight: maxheight, marginTop: '8px', paddingRight: '60px' }}>
+        {jsonStr}
+      </pre>
+    </div>
+  );
+}
 
 export default function GeneratePage() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -28,6 +70,7 @@ export default function GeneratePage() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [scoreCoverage, setScoreCoverage] = useState<Record<string, unknown> | null>(null);
   const [activeSection, setActiveSection] = useState<'outline' | 'generate' | 'gate' | 'structure' | 'coverage' | 'aiimage'>('outline');
+  const [outlineBasis, setOutlineBasis] = useState<{ mode: string; scoringItems: Array<{ category: string; item: string; score: unknown }>; docLength: number; matchedCount: number; totalItems: number } | null>(null);
   const streamRef = useRef<EventSource | null>(null);
 
   const [aiImagePrompt, setAiImagePrompt] = useState('');
@@ -75,25 +118,125 @@ export default function GeneratePage() {
     }
   };
 
+  const [generatingProgress, setGeneratingProgress] = useState<string>('');
+
   const handleGenerateOutline = async () => {
     if (!selectedProjectId) return;
     setLoading(true);
     setError('');
+    setOutlineBasis(null);
+    setGeneratingProgress('提交生成任务...');
+
     try {
-      const res = await generateApi.generateOutline(selectedProjectId, outlineMode);
-      setOutlineResult(res.data);
-      const outline = res.data?.outline || res.data;
-      if (Array.isArray(outline)) {
-        setOutlineNodes(outline as OutlineNode[]);
-      } else if (outline && typeof outline === 'object') {
-        const nodes = (outline as Record<string, unknown>).chapters || (outline as Record<string, unknown>).sections || [];
-        setOutlineNodes(nodes as OutlineNode[]);
+      // 异步任务模式：先提交获取 task_id，再轮询结果
+      const submitRes = await generateApi.generateOutline(selectedProjectId, outlineMode);
+      const taskId = submitRes.data?.task_id;
+      if (!taskId) {
+        // 兼容：如果后端直接返回结果（旧模式）
+        _processOutlineResult(submitRes.data);
+        return;
       }
+
+      // 轮询任务状态
+      setGeneratingProgress('大纲生成中，请耐心等待（可能需要2-5分钟）...');
+      const maxPolls = 120; // 最多轮询120次（10分钟）
+      const pollInterval = 5000; // 5秒一次
+
+      for (let i = 0; i < maxPolls; i++) {
+        await new Promise(r => setTimeout(r, pollInterval));
+        try {
+          const statusRes = await generateApi.getTaskStatus(taskId);
+          const task = statusRes.data;
+
+          if (task.status === 'completed') {
+            setGeneratingProgress('');
+            const result = task.result;
+            // 检查任务内部的 success 字段
+            if (result && result.success === false) {
+              setError(result.error || '大纲生成结果为空，请重试');
+              setLoading(false);
+              return;
+            }
+            _processOutlineResult(result);
+            return;
+          } else if (task.status === 'failed') {
+            setGeneratingProgress('');
+            setError(task.error || '大纲生成失败');
+            setLoading(false);
+            return;
+          } else {
+            // running/pending - 更新进度
+            const elapsed = task.elapsed_seconds ? `${Math.round(task.elapsed_seconds)}s` : '';
+            setGeneratingProgress(`大纲生成中... ${elapsed}`);
+          }
+        } catch {
+          // 轮询请求失败，继续尝试
+        }
+      }
+
+      // 超时
+      setGeneratingProgress('');
+      setError('大纲生成超时，请重试');
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : '大纲生成失败');
     } finally {
       setLoading(false);
     }
+  };
+
+  const _processOutlineResult = (data: Record<string, unknown> | null) => {
+    setOutlineResult(data);
+    const outline = data?.outline || data;
+    const resultMode = (data?.mode as string) || outlineMode;
+
+    // Extract basis info
+    let scoringItems: Array<{ category: string; item: string; score: unknown }> = [];
+    let matchedCount = 0;
+    if (outline && typeof outline === 'object') {
+      const outlineObj = outline as Record<string, unknown>;
+      const scoreMapping = outlineObj.score_mapping as Record<string, string> | undefined;
+      if (scoreMapping && typeof scoreMapping === 'object' && !Array.isArray(scoreMapping)) {
+        scoringItems = Object.entries(scoreMapping).map(([name, chapterId]) => ({
+          category: '', item: name, score: `→ 章节 ${chapterId}`,
+        }));
+        matchedCount = Object.keys(scoreMapping).length;
+      }
+    }
+
+    setOutlineBasis({
+      mode: resultMode,
+      scoringItems,
+      docLength: 0,
+      matchedCount,
+      totalItems: scoringItems.length,
+    });
+
+    if (Array.isArray(outline)) {
+      setOutlineNodes(outline as OutlineNode[]);
+    } else if (outline && typeof outline === 'object') {
+      const outlineObj = outline as Record<string, unknown>;
+      const nodes = (outlineObj.chapters || outlineObj.sections || []) as OutlineNode[];
+      const scoreMapping = outlineObj.score_mapping as Record<string, string> | undefined;
+      if (scoreMapping && typeof scoreMapping === 'object' && !Array.isArray(scoreMapping)) {
+        const nodeScoreMap: Record<string, string[]> = {};
+        for (const [scoreKey, chapterId] of Object.entries(scoreMapping)) {
+          const cid = String(chapterId);
+          if (!nodeScoreMap[cid]) nodeScoreMap[cid] = [];
+          nodeScoreMap[cid].push(scoreKey);
+        }
+        const assignScoreMapping = (nodeList: OutlineNode[]): OutlineNode[] => {
+          return nodeList.map(node => ({
+            ...node,
+            score_mapping: nodeScoreMap[node.id] || node.score_mapping || undefined,
+            children: node.children ? assignScoreMapping(node.children) : [],
+          }));
+        };
+        setOutlineNodes(assignScoreMapping(nodes));
+      } else {
+        setOutlineNodes(nodes);
+      }
+    }
+    setLoading(false);
   };
 
   const handleExtractMandatory = async () => {
@@ -453,7 +596,7 @@ export default function GeneratePage() {
                   fontSize: '13px',
                 }}
               >
-                {loading ? '生成中...' : '生成大纲'}
+                {loading ? (generatingProgress || '生成中...') : '生成大纲'}
               </button>
               <button
                 onClick={() => {
@@ -497,10 +640,56 @@ export default function GeneratePage() {
           {outlineResult && (
             <details style={{ marginTop: '12px' }}>
               <summary style={{ fontSize: '12px', color: 'var(--color-text-secondary)', cursor: 'pointer' }}>查看原始JSON结果</summary>
-              <pre style={{ background: '#f8fafc', padding: '12px', borderRadius: '8px', fontSize: '11px', overflow: 'auto', maxHeight: '200px', marginTop: '8px' }}>
-                {JSON.stringify(outlineResult, null, 2)}
-              </pre>
+              <CopyableJson data={outlineResult} maxheight="200px" />
             </details>
+          )}
+
+          {outlineBasis && (
+            <div style={{ marginTop: '16px', padding: '14px', background: '#f0f9ff', borderRadius: '8px', border: '1px solid #bfdbfe' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+                <Info size={16} color="#2563eb" />
+                <span style={{ fontSize: '14px', fontWeight: 600, color: '#1e40af' }}>生成依据</span>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: outlineBasis.scoringItems.length > 0 ? '12px' : '0' }}>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: '#1e40af' }}>
+                    {outlineBasis.mode === 'aligned' ? '对齐评分项模式' : '自由模式'}
+                  </div>
+                  <div style={{ fontSize: '11px', color: '#64748b' }}>生成模式</div>
+                </div>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: '#059669' }}>
+                    {outlineBasis.matchedCount} / {outlineBasis.totalItems}
+                  </div>
+                  <div style={{ fontSize: '11px', color: '#64748b' }}>评分项匹配</div>
+                </div>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: '#64748b' }}>
+                    {outlineNodes.length} 章
+                  </div>
+                  <div style={{ fontSize: '11px', color: '#64748b' }}>大纲章节数</div>
+                </div>
+              </div>
+              {outlineBasis.scoringItems.length > 0 && (
+                <div>
+                  <div style={{ fontSize: '12px', fontWeight: 600, color: '#475569', marginBottom: '6px' }}>评分项→章节映射</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    {outlineBasis.scoringItems.map((item, idx) => (
+                      <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', padding: '4px 8px', background: 'white', borderRadius: '4px', border: '1px solid #e2e8f0' }}>
+                        <span style={{ color: '#059669', fontWeight: 500, minWidth: '120px' }}>{item.item}</span>
+                        <span style={{ color: '#94a3b8' }}>→</span>
+                        <span style={{ color: '#1e40af' }}>{String(item.score)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {outlineBasis.mode === 'free' && (
+                <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>
+                  自由模式：大纲仅基于招标文件内容生成，未对齐评分项。如需对齐，请选择"对齐评分项模式"。
+                </div>
+              )}
+            </div>
           )}
         </div>
       )}
@@ -736,9 +925,7 @@ export default function GeneratePage() {
           {mandatoryResult && (
             <div style={{ marginTop: '16px' }}>
               <h4 style={{ fontSize: '13px', fontWeight: 600, marginBottom: '8px' }}>实质性要求提取结果</h4>
-              <pre style={{ background: '#f8fafc', padding: '12px', borderRadius: '8px', fontSize: '12px', overflow: 'auto', maxHeight: '300px' }}>
-                {JSON.stringify(mandatoryResult, null, 2)}
-              </pre>
+              <CopyableJson data={mandatoryResult} maxheight="300px" />
             </div>
           )}
         </div>
@@ -906,9 +1093,7 @@ export default function GeneratePage() {
                   <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', marginTop: '4px' }}>未覆盖评分项</div>
                 </div>
               </div>
-              <pre style={{ background: '#f8fafc', padding: '12px', borderRadius: '8px', fontSize: '12px', overflow: 'auto', maxHeight: '300px' }}>
-                {JSON.stringify(scoreCoverage, null, 2)}
-              </pre>
+              <CopyableJson data={scoreCoverage} maxheight="300px" />
             </div>
           ) : (
             <div style={{ textAlign: 'center', padding: '40px', color: 'var(--color-text-secondary)', fontSize: '14px' }}>

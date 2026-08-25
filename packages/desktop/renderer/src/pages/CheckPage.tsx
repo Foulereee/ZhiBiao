@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { ShieldCheck, Loader2, AlertTriangle, CheckCircle2, XCircle, Download, FileText, Upload, FolderOpen } from 'lucide-react';
+import { ShieldCheck, Loader2, AlertTriangle, CheckCircle2, XCircle, Download, FileText, Upload, FolderOpen, Copy } from 'lucide-react';
 import { checkApi, projectApi, type Project } from '../services/api';
 import { useAppStore } from '../stores/appStore';
 import StepHeader from '../components/common/StepHeader';
@@ -341,9 +341,22 @@ export default function CheckPage() {
             风险等级：{riskLevel === 'high' ? '高风险' : riskLevel === 'medium' ? '中风险' : '低风险'}
           </span>
         </div>
-        <pre style={{ background: '#f8fafc', padding: '16px', borderRadius: '8px', fontSize: '12px', overflow: 'auto', maxHeight: '500px' }}>
-          {JSON.stringify(data, null, 2)}
-        </pre>
+        <div style={{ position: 'relative' }}>
+          <button
+            onClick={async () => {
+              try { await navigator.clipboard.writeText(JSON.stringify(data, null, 2)); } catch { /* fallback */ }
+              const btn = document.getElementById('check-copy-btn');
+              if (btn) { btn.textContent = '已复制'; setTimeout(() => { btn.textContent = '复制'; }, 2000); }
+            }}
+            id="check-copy-btn"
+            style={{ position: 'absolute', top: '8px', right: '8px', zIndex: 1, padding: '4px 8px', background: 'white', border: '1px solid var(--color-border)', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px', color: '#64748b' }}
+          >
+            <Copy size={12} /> 复制
+          </button>
+          <pre style={{ background: '#f8fafc', padding: '16px', borderRadius: '8px', fontSize: '12px', overflow: 'auto', maxHeight: '500px', paddingRight: '60px' }}>
+            {JSON.stringify(data, null, 2)}
+          </pre>
+        </div>
       </div>
     );
   };

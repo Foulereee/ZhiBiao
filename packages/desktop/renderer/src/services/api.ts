@@ -8,6 +8,38 @@ const api = axios.create({
   },
 });
 
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('bidmaster_token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      const storeData = localStorage.getItem('bidmaster-app-store');
+      if (storeData) {
+        try {
+          const parsed = JSON.parse(storeData);
+          if (parsed?.state?.token) {
+            localStorage.removeItem('bidmaster_token');
+            localStorage.removeItem('bidmaster_user');
+            const cleanState = { ...parsed, state: { ...parsed.state, token: null, user: null } };
+            localStorage.setItem('bidmaster-app-store', JSON.stringify(cleanState));
+          }
+        } catch { /* ignore */ }
+      }
+      if (window.location.pathname !== '/login') {
+        window.location.href = '/login';
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
 export interface Project {
   id: string;
   name: string;
@@ -47,9 +79,35 @@ export interface GateInfo {
   items?: string[];
 }
 
+export interface LoginUser {
+  id: string;
+  email: string;
+  name: string;
+  role: string;
+  avatar: string | null;
+  roles: Array<{ id: string; name: string; display_name: string }>;
+}
+
+export const authApi = {
+  login: (email: string, password: string) =>
+    api.post<{ token: string; user: LoginUser }>('/auth/login', { email, password }),
+  me: () => {
+    const token = localStorage.getItem('bidmaster_token');
+    return api.get<LoginUser>(`/auth/me?token=${token}`);
+  },
+  logout: () => {
+    const token = localStorage.getItem('bidmaster_token');
+    return api.post(`/auth/logout?token=${token}`);
+  },
+  changePassword: (oldPassword: string, newPassword: string) => {
+    const token = localStorage.getItem('bidmaster_token');
+    return api.put('/auth/change-password', { token, old_password: oldPassword, new_password: newPassword });
+  },
+};
+
 export const projectApi = {
-  list: () => api.get<{ projects: Project[] }>('/projects'),
-  create: (name: string) => api.post(`/projects?name=${encodeURIComponent(name)}`),
+  list: () => api.get<{ projects: Project[] }>('/projects/'),
+  create: (name: string) => api.post(`/projects/?name=${encodeURIComponent(name)}`),
   get: (id: string) => api.get(`/projects/${id}`),
   updateStatus: (id: string, status: string) => api.patch(`/projects/${id}/status?status=${status}`),
   confirmGate: (id: string, stage: string) => api.post(`/projects/${id}/gate/${stage}`),
@@ -57,13 +115,32 @@ export const projectApi = {
 };
 
 export const interpretApi = {
-  upload: (projectId: string, file: File) => {
+  upload: (projectId: string, files: File[]) => {
     const formData = new FormData();
-    formData.append('file', file);
+    for (const f of files) {
+      formData.append('files', f);
+    }
     return api.post(`/interpret/upload/${projectId}`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
+  listDocuments: (projectId: string) => api.get(`/interpret/documents/${projectId}`),
+  getDocument: (documentId: string) => api.get(`/interpret/document/${documentId}`),
+  getAnalysis: (projectId: string) => api.get<{
+    has_documents: boolean;
+    has_parsed: boolean;
+    has_analysis: boolean;
+    analysis: {
+      dimensions: Record<string, unknown> | null;
+      scoring_matrix: Record<string, unknown> | null;
+      risk_flags: Record<string, unknown> | null;
+      sections: unknown[] | null;
+    } | null;
+    parse_info: {
+      text_length: number;
+      doc_metadata: Record<string, unknown> | null;
+    } | null;
+  }>(`/interpret/analysis/${projectId}`),
   parse: (projectId: string) => api.post(`/interpret/parse/${projectId}`),
   interpret: (projectId: string) => api.post(`/interpret/interpret/${projectId}`),
   scoringMatrix: (projectId: string) => api.post(`/interpret/scoring-matrix/${projectId}`),
@@ -75,8 +152,10 @@ export const interpretApi = {
 export const generateApi = {
   generateOutline: (projectId: string, mode: string = 'aligned') =>
     api.post(`/generate/${projectId}/outline?mode=${mode}`),
+  getTaskStatus: (taskId: string) =>
+    api.get(`/generate/task/${taskId}`),
   generateChapter: (projectId: string, chapterId: string, mode: string = 'A') =>
-    api.post(`/generate/${projectId}/content/${chapterId}?mode=${mode}`),
+    api.post(`/generate/${projectId}/content/${chapterId}?mode=${mode}`, {}, { timeout: 300000 }),
   streamChapter: (projectId: string, chapterId: string, mode: string = 'A') =>
     `/api/generate/${projectId}/content/stream/${chapterId}?mode=${mode}`,
   mandatoryExtract: (projectId: string) =>
@@ -162,7 +241,7 @@ export const formatApi = {
 };
 
 export const skillApi = {
-  list: () => api.get('/skills'),
+  list: () => api.get('/skills/'),
   get: (name: string) => api.get(`/skills/${name}`),
   execute: (name: string, parameters: Record<string, unknown>, projectId: string = '') =>
     api.post(`/skills/${name}/execute?project_id=${projectId}`, { parameters }),
@@ -195,8 +274,8 @@ export const newsApi = {
 };
 
 export const knowledgeApi = {
-  list: () => api.get('/knowledge'),
-  create: (data: { name: string; embedding_model?: string }) => api.post('/knowledge', data),
+  list: () => api.get('/knowledge/'),
+  create: (data: { name: string; embedding_model?: string }) => api.post('/knowledge/', data),
   delete: (id: string) => api.delete(`/knowledge/${id}`),
   upload: (id: string, file: File) => {
     const formData = new FormData();

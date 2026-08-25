@@ -119,7 +119,18 @@ export default function SettingsPage() {
         setRbacRoles(rolesRes.value.data.roles || rolesRes.value.data || []);
       }
       if (permsRes.status === 'fulfilled') {
-        const perms = (permsRes.value.data.permissions || permsRes.value.data || []) as RbacPermission[];
+        let perms = (permsRes.value.data.permissions || permsRes.value.data || []) as RbacPermission[];
+        if (!Array.isArray(perms)) {
+          const flatPerms: RbacPermission[] = [];
+          for (const [cat, items] of Object.entries(perms)) {
+            if (Array.isArray(items)) {
+              for (const p of items) {
+                flatPerms.push({ ...p, category: p.category || cat });
+              }
+            }
+          }
+          perms = flatPerms;
+        }
         setRbacPermissions(perms);
         const categories = new Set<string>(perms.map((p) => p.category));
         setExpandedCategories(categories);
@@ -220,9 +231,50 @@ export default function SettingsPage() {
     }
   };
 
+  const [selectedProviderId, setSelectedProviderId] = useState('deepseek');
+  const [customModel, setCustomModel] = useState('');
+  const [useCustomModel, setUseCustomModel] = useState(false);
+
+  const [agentCustomModel, setAgentCustomModel] = useState('');
+  const [agentUseCustom, setAgentUseCustom] = useState<string>('');
+
   const allModelOptions = providers.flatMap(p =>
-    p.models.map(m => ({ value: `${p.id}/${m}`, label: `${p.name} - ${m}` }))
+    p.models.map(m => ({ value: `${p.id}/${m}`, label: `${p.name} - ${m}`, providerId: p.id }))
   );
+
+  const providerApiBases: Record<string, string> = {
+    deepseek: 'https://api.deepseek.com',
+    zhipu: 'https://open.bigmodel.cn/api/paas/v4',
+    qianfan: 'https://aip.baidubce.com',
+    dashscope: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    siliconflow: 'https://api.siliconflow.cn/v1',
+    ollama: 'http://localhost:11434',
+    openai: 'https://api.openai.com/v1',
+  };
+
+  const handleProviderChange = (providerId: string) => {
+    setSelectedProviderId(providerId);
+    setApiBase(providerApiBases[providerId] || '');
+    setUseCustomModel(false);
+    setCustomModel('');
+    const provider = providers.find(p => p.id === providerId);
+    if (provider && provider.models.length > 0) {
+      setModel(`${providerId}/${provider.models[0]}`);
+    }
+  };
+
+  const handlePresetModelChange = (modelValue: string) => {
+    setModel(modelValue);
+    setUseCustomModel(false);
+  };
+
+  const handleCustomModelConfirm = () => {
+    if (customModel.trim()) {
+      const prefix = selectedProviderId;
+      const fullModel = customModel.includes('/') ? customModel : `${prefix}/${customModel.trim()}`;
+      setModel(fullModel);
+    }
+  };
 
   const handleCreateRole = async () => {
     if (!newRoleName || !newRoleDisplayName) return;
@@ -361,7 +413,20 @@ export default function SettingsPage() {
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
       <div style={{ background: 'var(--color-surface)', borderRadius: '12px', padding: '24px', border: '1px solid var(--color-border)' }}>
         <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '16px' }}>默认LLM供应商配置</h3>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <div>
+            <label style={{ fontSize: '13px', color: 'var(--color-text-secondary)', display: 'block', marginBottom: '6px' }}>选择供应商</label>
+            <select
+              value={selectedProviderId}
+              onChange={(e) => handleProviderChange(e.target.value)}
+              style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '14px', background: 'white' }}
+            >
+              {providers.map(p => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          </div>
+
           <div>
             <label style={{ fontSize: '13px', color: 'var(--color-text-secondary)', display: 'block', marginBottom: '6px' }}>API Key</label>
             <input
@@ -372,6 +437,7 @@ export default function SettingsPage() {
               style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '14px', boxSizing: 'border-box' }}
             />
           </div>
+
           <div>
             <label style={{ fontSize: '13px', color: 'var(--color-text-secondary)', display: 'block', marginBottom: '6px' }}>API Base URL</label>
             <input
@@ -381,36 +447,72 @@ export default function SettingsPage() {
               style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '14px', boxSizing: 'border-box' }}
             />
           </div>
+
           <div>
-            <label style={{ fontSize: '13px', color: 'var(--color-text-secondary)', display: 'block', marginBottom: '6px' }}>默认模型</label>
-            <select
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '14px' }}
-            >
-              {providers.map(p => (
-                p.models.map(m => (
-                  <option key={`${p.id}/${m}`} value={`${p.id}/${m}`}>
-                    {p.name} - {m}
-                  </option>
-                ))
-              ))}
-            </select>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+              <label style={{ fontSize: '13px', color: 'var(--color-text-secondary)' }}>模型选择</label>
+              <button
+                onClick={() => setUseCustomModel(!useCustomModel)}
+                style={{ fontSize: '12px', color: 'var(--color-primary)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+              >
+                {useCustomModel ? '选择预设模型' : '自定义模型'}
+              </button>
+            </div>
+
+            {useCustomModel ? (
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <input
+                  type="text"
+                  value={customModel}
+                  onChange={(e) => setCustomModel(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleCustomModelConfirm()}
+                  placeholder={selectedProviderId === 'siliconflow' ? '如: deepseek-ai/DeepSeek-V3' : '输入模型名称'}
+                  style={{ flex: 1, padding: '8px 12px', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '14px', boxSizing: 'border-box' }}
+                />
+                <button
+                  onClick={handleCustomModelConfirm}
+                  style={{ padding: '8px 14px', background: 'var(--color-primary)', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' }}
+                >
+                  确认
+                </button>
+              </div>
+            ) : (
+              <select
+                value={model}
+                onChange={(e) => handlePresetModelChange(e.target.value)}
+                style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '14px', background: 'white' }}
+              >
+                {providers.filter(p => p.id === selectedProviderId).flatMap(p =>
+                  p.models.map(m => (
+                    <option key={`${p.id}/${m}`} value={`${p.id}/${m}`}>
+                      {m}
+                    </option>
+                  ))
+                )}
+              </select>
+            )}
+
+            <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '4px' }}>
+              当前模型: <code style={{ background: '#f1f5f9', padding: '1px 4px', borderRadius: '3px' }}>{model}</code>
+            </div>
           </div>
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
+
+          <div style={{ display: 'flex', gap: '8px' }}>
             <button
               onClick={handleTestConnection}
               disabled={testing}
-              style={{ flex: 1, padding: '8px 12px', background: 'var(--color-primary)', color: 'white', border: 'none', borderRadius: '6px', cursor: testing ? 'not-allowed' : 'pointer', fontSize: '13px' }}
+              style={{ flex: 1, padding: '10px 12px', background: 'var(--color-primary)', color: 'white', border: 'none', borderRadius: '6px', cursor: testing ? 'not-allowed' : 'pointer', fontSize: '13px', fontWeight: 500, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
             >
+              {testing ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : null}
               {testing ? '测试中...' : '测试连接'}
             </button>
             <button
               onClick={handleSaveDefaultModel}
               disabled={savingDefault}
-              style={{ flex: 1, padding: '8px 12px', background: '#059669', color: 'white', border: 'none', borderRadius: '6px', cursor: savingDefault ? 'not-allowed' : 'pointer', fontSize: '13px' }}
+              style={{ flex: 1, padding: '10px 12px', background: '#059669', color: 'white', border: 'none', borderRadius: '6px', cursor: savingDefault ? 'not-allowed' : 'pointer', fontSize: '13px', fontWeight: 500, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
             >
-              {savingDefault ? '保存中...' : '保存默认'}
+              {savingDefault ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Save size={14} />}
+              {savingDefault ? '保存中...' : '保存为默认'}
             </button>
           </div>
         </div>
@@ -442,9 +544,28 @@ export default function SettingsPage() {
         <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '16px' }}>支持的供应商</h3>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           {providers.map(p => (
-            <div key={p.id} style={{ padding: '10px 12px', border: '1px solid var(--color-border)', borderRadius: '8px' }}>
-              <div style={{ fontSize: '13px', fontWeight: 600 }}>{p.name}</div>
-              <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)', marginTop: '4px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+            <div
+              key={p.id}
+              onClick={() => handleProviderChange(p.id)}
+              style={{
+                padding: '12px',
+                border: `1px solid ${p.id === selectedProviderId ? 'var(--color-primary)' : 'var(--color-border)'}`,
+                borderRadius: '8px',
+                background: p.id === selectedProviderId ? '#eff6ff' : 'white',
+                cursor: 'pointer',
+                transition: 'all 0.2s',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '13px', fontWeight: 600 }}>{p.name}</span>
+                {p.id === selectedProviderId && (
+                  <span style={{ fontSize: '11px', color: 'var(--color-primary)', background: '#dbeafe', padding: '1px 8px', borderRadius: '10px' }}>当前</span>
+                )}
+              </div>
+              <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '4px' }}>
+                {providerApiBases[p.id] || ''}
+              </div>
+              <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)', marginTop: '6px', display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
                 {p.models.map(m => (
                   <span key={m} style={{ padding: '1px 6px', background: '#f0f9ff', borderRadius: '4px', fontSize: '11px' }}>{m}</span>
                 ))}
@@ -558,19 +679,71 @@ export default function SettingsPage() {
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                 <div>
-                  <label style={{ fontSize: '13px', color: 'var(--color-text-secondary)', display: 'block', marginBottom: '6px' }}>使用模型</label>
-                  <select
-                    value={agent.model}
-                    onChange={(e) => handleAgentChange(agent.name, 'model', e.target.value)}
-                    style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '14px' }}
-                  >
-                    <option value="">-- 使用默认模型 --</option>
-                    {allModelOptions.map(opt => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
-                  <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)', marginTop: '4px' }}>
-                    留空则使用平台默认模型。不同Agent可选用不同模型以优化效果。
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                    <label style={{ fontSize: '13px', color: 'var(--color-text-secondary)' }}>使用模型</label>
+                    <button
+                      onClick={() => {
+                        if (agentUseCustom === agent.name) {
+                          setAgentUseCustom('');
+                        } else {
+                          setAgentUseCustom(agent.name);
+                          setAgentCustomModel(agent.model || '');
+                        }
+                      }}
+                      style={{ fontSize: '12px', color: 'var(--color-primary)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                    >
+                      {agentUseCustom === agent.name ? '选择预设' : '自定义模型'}
+                    </button>
+                  </div>
+
+                  {agentUseCustom === agent.name ? (
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <input
+                        type="text"
+                        value={agentCustomModel}
+                        onChange={(e) => setAgentCustomModel(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && agentCustomModel.trim()) {
+                            handleAgentChange(agent.name, 'model', agentCustomModel.trim());
+                          }
+                        }}
+                        placeholder="如: siliconflow/deepseek-ai/DeepSeek-V3"
+                        style={{ flex: 1, padding: '8px 12px', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '14px', boxSizing: 'border-box' }}
+                      />
+                      <button
+                        onClick={() => {
+                          if (agentCustomModel.trim()) {
+                            handleAgentChange(agent.name, 'model', agentCustomModel.trim());
+                          }
+                        }}
+                        style={{ padding: '8px 14px', background: 'var(--color-primary)', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' }}
+                      >
+                        确认
+                      </button>
+                    </div>
+                  ) : (
+                    <select
+                      value={agent.model}
+                      onChange={(e) => handleAgentChange(agent.name, 'model', e.target.value)}
+                      style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '14px', background: 'white' }}
+                    >
+                      <option value="">-- 使用默认模型 --</option>
+                      {allModelOptions.map(opt => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                  )}
+
+                  <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '4px' }}>
+                    当前: <code style={{ background: '#f1f5f9', padding: '1px 4px', borderRadius: '3px' }}>{agent.model || '默认'}</code>
+                    {agent.model && (
+                      <button
+                        onClick={() => handleAgentChange(agent.name, 'model', '')}
+                        style={{ marginLeft: '6px', fontSize: '11px', color: '#dc2626', background: 'none', border: 'none', cursor: 'pointer' }}
+                      >
+                        清除
+                      </button>
+                    )}
                   </div>
                 </div>
                 <div>
@@ -588,22 +761,45 @@ export default function SettingsPage() {
                     <span style={{ fontSize: '14px', fontWeight: 600, minWidth: '32px', textAlign: 'center' }}>{agent.temperature}</span>
                   </div>
                   <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)', marginTop: '4px' }}>
-                    低值=精确稳定，高值=创意多样。解读/检查建议0.1-0.3，内容生成建议0.5-0.8
+                    低值=精确稳定，高值=创意多样
                   </div>
                 </div>
                 <div>
                   <label style={{ fontSize: '13px', color: 'var(--color-text-secondary)', display: 'block', marginBottom: '6px' }}>最大Token数</label>
-                  <select
-                    value={agent.max_tokens}
-                    onChange={(e) => handleAgentChange(agent.name, 'max_tokens', parseInt(e.target.value))}
-                    style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '14px' }}
-                  >
-                    <option value={1024}>1024</option>
-                    <option value={2048}>2048</option>
-                    <option value={4096}>4096</option>
-                    <option value={8192}>8192</option>
-                    <option value={16384}>16384</option>
-                  </select>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <select
+                      value={[1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072].includes(agent.max_tokens) ? agent.max_tokens : 'custom'}
+                      onChange={(e) => {
+                        if (e.target.value !== 'custom') {
+                          handleAgentChange(agent.name, 'max_tokens', parseInt(e.target.value));
+                        }
+                      }}
+                      style={{ flex: 1, padding: '8px 12px', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '14px', background: 'white' }}
+                    >
+                      <option value={1024}>1,024</option>
+                      <option value={2048}>2,048</option>
+                      <option value={4096}>4,096</option>
+                      <option value={8192}>8,192</option>
+                      <option value={16384}>16,384</option>
+                      <option value={32768}>32,768</option>
+                      <option value={65536}>65,536</option>
+                      <option value={131072}>131,072</option>
+                      <option value="custom">自定义...</option>
+                    </select>
+                    {![1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072].includes(agent.max_tokens) && (
+                      <input
+                        type="number"
+                        value={agent.max_tokens}
+                        onChange={(e) => handleAgentChange(agent.name, 'max_tokens', parseInt(e.target.value) || 4096)}
+                        min={256}
+                        max={200000}
+                        style={{ width: '100px', padding: '8px 12px', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '14px' }}
+                      />
+                    )}
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)', marginTop: '4px' }}>
+                    不同模型支持的最大值不同，超出会被自动截断
+                  </div>
                 </div>
                 <div>
                   <label style={{ fontSize: '13px', color: 'var(--color-text-secondary)', display: 'block', marginBottom: '6px' }}>Agent名称</label>
