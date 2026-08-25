@@ -352,6 +352,21 @@ if not gate_keeper.is_passed(project_id, "interpret"):
 
 ---
 
+## 💬 联系作者
+
+扫码关注微信公众号，回复 **bidmaster** 即可获取：
+
+- 作者个人微信
+- 招投标行业交流群
+- 最新功能动态与使用技巧
+- 专属技术支持
+
+![微信公众号](packages/desktop/images/wechat-qrcode.png)
+
+> 💡 **操作说明**：打开微信 → 扫一扫 → 关注公众号 → 发送消息 `bidmaster` → 自动回复作者微信及相关信息。
+
+---
+
 ## 📄 许可证
 
 本项目采用 MIT 许可证 - 详见 [LICENSE](LICENSE) 文件
