@@ -1,0 +1,44 @@
+# ============================================================================
+# BidMaster Pro Web 网页版镜像
+# ----------------------------------------------------------------------------
+# 项目前端有两个包：
+#   - packages/app      → Electron 桌面客户端（强依赖 IPC/preload，electron-builder 打包分发，不走 Docker）
+#   - packages/desktop  → 网页版（renderer 用 axios 直调 /api/*，可脱离 Electron）
+# 本镜像构建 packages/desktop 的 renderer → nginx 托管 + 反代 /api → api 服务。
+# ----------------------------------------------------------------------------
+# 构建：
+#   docker build -f docker/Dockerfile.web -t bidmaster-pro-web:latest .
+# ============================================================================
+
+# ─────────────── Stage 1: 构建网页版静态资源 ───────────────
+FROM node:20-alpine AS builder
+
+WORKDIR /build
+
+# 先拷贝依赖声明，利用层缓存（package*.json 匹配 package.json，若有 lock 一并拷入）
+COPY packages/desktop/package*.json ./
+# 如果 lock 不存在，跳过 npm ci 回退到 npm install
+RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
+
+# 拷贝网页版源码与配置（tsconfig.json / vite.config.ts / renderer / preload / main）
+COPY packages/desktop/ ./
+
+# 构建生产静态资源（vite build 输出到 /build/dist）
+RUN npm run build
+
+
+# ─────────────── Stage 2: nginx 托管 ───────────────
+FROM nginx:1.27-alpine AS runtime
+
+# 拷贝自定义 nginx 配置（反向代理 /api → api 服务，SSE 流式支持）
+COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
+
+# 拷贝构建产物到 nginx html 目录
+COPY --from=builder /build/dist /usr/share/nginx/html
+
+EXPOSE 80
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD wget -q --spider http://127.0.0.1/ || exit 1
+
+CMD ["nginx", "-g", "daemon off;"]

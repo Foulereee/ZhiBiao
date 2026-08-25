@@ -24,10 +24,11 @@ def get_engine():
             "echo": settings.debug,
             "pool_size": 20,
             "max_overflow": 10,
+            "pool_pre_ping": True,
         }
         if settings.db_type == "mysql":
             engine_kwargs["pool_recycle"] = 3600
-            engine_kwargs["pool_pre_ping"] = True
+            engine_kwargs["connect_args"] = {"charset": "utf8mb4"}
         _engine = create_async_engine(database_url, **engine_kwargs)
     return _engine
 
@@ -77,7 +78,14 @@ async def init_db():
 
 
 async def close_db():
-    global _engine
+    global _engine, _async_session_factory, _db_ready
     if _engine is not None:
-        await _engine.dispose()
-        _engine = None
+        try:
+            await _engine.dispose()
+        except Exception as e:
+            logger.warning(f"关闭数据库引擎时出错: {e}")
+        finally:
+            _engine = None
+    _async_session_factory = None
+    _db_ready = False
+    logger.info("数据库资源已释放")

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pydantic_settings import BaseSettings
 from pathlib import Path
+from urllib.parse import quote_plus
 
 
 class Settings(BaseSettings):
@@ -37,12 +38,22 @@ class Settings(BaseSettings):
     embedding_api_key: str = ""
     embedding_api_base: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
+    mineru_mode: str = "cloud"
+    mineru_api_key: str = ""
+    mineru_endpoint: str = "https://mineru.net/api/v4"
+    mineru_timeout: int = 180
+    mineru_model_version: str = "vlm"
+    mineru_poll_interval: int = 5
+    mineru_max_polls: int = 60
+
+    tender_text_max_chars: int = 32000
+
     model_config = {"env_file": ".env", "env_prefix": "BMP_", "extra": "ignore"}
 
     def get_database_url(self) -> str:
         if self.db_type == "mysql":
             return (
-                f"mysql+aiomysql://{self.mysql_user}:{self.mysql_password}"
+                f"mysql+aiomysql://{quote_plus(self.mysql_user)}:{quote_plus(self.mysql_password)}"
                 f"@{self.mysql_host}:{self.mysql_port}/{self.mysql_database}"
                 f"?charset=utf8mb4"
             )

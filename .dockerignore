@@ -1,0 +1,82 @@
+# ===== 密钥与环境（容器内通过环境变量注入，不拷入镜像）=====
+.env
+.env.local
+.env.*.local
+.env.docker
+
+# ===== Python 缓存与构建产物 =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+build/
+*.egg-info
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# ===== 虚拟环境 =====
+venv/
+.venv/
+
+# ===== Node.js =====
+**/node_modules/
+**/dist/
+**/release/
+**/.vite/
+
+# ===== IDE / 编辑器 =====
+.idea/
+.vscode/
+*.swp
+*.swo
+.codeartsdoer/
+.qoder/
+
+# ===== 操作系统 =====
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ===== 运行时数据（通过 volume 挂载，不打入镜像）=====
+uploads/
+projects/
+chroma_db/
+
+# ===== Celery 调度文件 =====
+celerybeat-schedule
+celerybeat-schedule.pid
+
+# ===== 日志 =====
+*.log
+
+# ===== Git =====
+.git/
+.gitignore
+
+# ===== 文档与测试（生产镜像不需要）=====
+docs/
+tests/
+*.md
+!README.md
+本地架构.html
+PRESENTATION.html
+SOCIAL_PREVIEW.html
+
+# ===== 临时测试脚本 =====
+test_llm_gateway.py
+test_outline_gen.py
+
+# ===== Docker 构建产物（保留 Dockerfile/entrypoint.sh/nginx.conf 供 COPY）=====
+# 仅排除 compose 编排文件，Dockerfile/entrypoint.sh/nginx.conf 需被 COPY 入镜像
+docker/docker-compose*.yml
+docker/.env.docker*
+docker/DEPLOY*.md
+
+# ===== 桌面端构建产物 =====
+packages/app/dist/
+packages/app/release/
+packages/desktop/dist/
+packages/desktop/release/

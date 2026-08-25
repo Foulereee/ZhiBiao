@@ -1,10 +1,13 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { FileText, Upload, CheckCircle, AlertTriangle, Download, Settings, Eye, Wand2, Palette, Save, Plus, Trash2, RotateCcw, ChevronDown, ChevronRight, Copy } from 'lucide-react';
-import { formatApi } from '../services/api';
+import { useNavigate } from 'react-router-dom';
+import { FileText, Upload, CheckCircle, AlertTriangle, Download, Settings, Eye, Wand2, Palette, Save, Plus, Trash2, RotateCcw, ChevronDown, ChevronRight, Copy, FileType2, FileType, Loader2, FolderOpen, ArrowRight, AlertCircle } from 'lucide-react';
+import { formatApi, projectApi, generateApi, type Project } from '../services/api';
 import StepHeader from '../components/common/StepHeader';
 
 type FormatMode = 'format' | 'check' | 'diff' | 'beautify';
 type PageTab = 'format' | 'config';
+type OutputFormat = 'docx' | 'doc' | 'pdf';
+type SourceMode = 'project' | 'file';
 
 interface FormatIssue {
   type: string;
@@ -204,6 +207,14 @@ const CONFIG_GROUPS: ConfigGroup[] = [
 
 export default function FormatPage() {
   const [pageTab, setPageTab] = useState<PageTab>('format');
+  const [sourceMode, setSourceMode] = useState<SourceMode>('project');
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [selectedProjectId, setSelectedProjectId] = useState<string>('');
+  const [selectedProjectChapters, setSelectedProjectChapters] = useState<Array<{ id: string; title: string; word_count: number; status: string; has_content?: boolean }>>([]);
+  const [selectedProjectHasOutline, setSelectedProjectHasOutline] = useState<boolean | null>(null);
+  const [selectedProjectChapterCount, setSelectedProjectChapterCount] = useState<number>(0);
+  const [projectPickerOpen, setProjectPickerOpen] = useState(false);
+  const projectPickerRef = useRef<HTMLDivElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [template, setTemplate] = useState<string>('default');
   const [mode, setMode] = useState<FormatMode>('format');
@@ -227,6 +238,19 @@ export default function FormatPage() {
     page: true, heading_font: true, heading_size: true, heading_style: false,
     body: true, other_font: false, table: true, advanced: false,
   });
+
+  const [outputFormat, setOutputFormat] = useState<OutputFormat>('docx');
+  const [exporting, setExporting] = useState<OutputFormat | null>(null);
+  const navigate = useNavigate();
+
+  const goToGenerate = useCallback(() => {
+    if (selectedProjectId) {
+      try { localStorage.setItem('bidmaster_focus_project', selectedProjectId); } catch { /* ignore */ }
+    }
+    navigate('/generate');
+  }, [navigate, selectedProjectId]);
+  const [exportError, setExportError] = useState<string>('');
+  const [lastOutputPath, setLastOutputPath] = useState<string>('');
 
   const loadTemplates = useCallback(async () => {
     try {
@@ -258,6 +282,66 @@ export default function FormatPage() {
     }
   }, [configTemplate, pageTab, loadTemplateConfig]);
 
+  useEffect(() => {
+    if (sourceMode === 'project') {
+      projectApi.list().then(res => {
+        const list = res.data.projects || res.data || [];
+        setProjects(Array.isArray(list) ? list : []);
+        if (!selectedProjectId && list.length > 0) {
+          setSelectedProjectId(list[0].id);
+        }
+      }).catch(() => setProjects([]));
+    }
+  }, [sourceMode]);
+
+  useEffect(() => {
+    if (!selectedProjectId) {
+      setSelectedProjectChapters([]);
+      setSelectedProjectHasOutline(null);
+      setSelectedProjectChapterCount(0);
+      return;
+    }
+    let aborted = false;
+    generateApi.listChapters(selectedProjectId).then(res => {
+      if (aborted) return;
+      const data = res.data || {};
+      const chs = Array.isArray(data.chapters) ? data.chapters : (Array.isArray(data) ? data : []);
+      setSelectedProjectChapters(chs);
+      setSelectedProjectChapterCount(chs.length);
+    }).catch(() => {
+      if (aborted) return;
+      setSelectedProjectChapters([]);
+      setSelectedProjectChapterCount(0);
+    });
+    projectApi.get(selectedProjectId).then(res => {
+      if (aborted) return;
+      const proj = res.data;
+      const tree = proj?.outline_tree || proj?.tree || proj?.config?.outline_tree || null;
+      if (Array.isArray(tree)) {
+        setSelectedProjectHasOutline(tree.length > 0);
+      } else if (tree && typeof tree === 'object' && Array.isArray((tree as Record<string, unknown>).chapters)) {
+        setSelectedProjectHasOutline(((tree as Record<string, unknown>).chapters as unknown[]).length > 0);
+      } else {
+        setSelectedProjectHasOutline(null);
+      }
+    }).catch(() => {
+      if (aborted) return;
+      setSelectedProjectHasOutline(null);
+    });
+    return () => { aborted = true; };
+  }, [selectedProjectId]);
+
+  useEffect(() => {
+    if (!projectPickerOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (projectPickerRef.current && !projectPickerRef.current.contains(e.target as Node)) {
+        setProjectPickerOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [projectPickerOpen]);
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const selected = e.target.files[0];
@@ -275,31 +359,109 @@ export default function FormatPage() {
   };
 
   const handleExecute = async () => {
-    if (!file) {
+    if (sourceMode === 'file' && !file) {
       setError('请先上传文件');
       return;
+    }
+    if (sourceMode === 'project' && !selectedProjectId) {
+      setError('请先选择项目');
+      return;
+    }
+    if (sourceMode === 'project' && mode !== 'format') {
+      setError('项目源仅支持"一键排版"模式，请切换为上传文件或切换模式');
+      return;
+    }
+    if (sourceMode === 'project') {
+      if (selectedProjectChapterCount === 0) {
+        setError(`项目「${projects.find(p => p.id === selectedProjectId)?.name || ''}」尚未生成任何章节正文，请先到「投标生成」完成「大纲生成」和「正文生成」。`);
+        return;
+      }
+      const emptyCount = selectedProjectChapters.filter(c => c.has_content === false || (!c.has_content && (!c.word_count || c.word_count === 0))).length;
+      if (emptyCount === selectedProjectChapters.length) {
+        setError(`项目「${projects.find(p => p.id === selectedProjectId)?.name || ''}」所有 ${emptyCount} 个章节都未生成正文，请先到「投标生成」完成正文生成后再操作。`);
+        return;
+      }
     }
     setLoading(true);
     setError('');
 
     try {
+      if (sourceMode === 'project') {
+        const res = await formatApi.formatFromProject(selectedProjectId, template);
+        const out = (res.data?.output_path as string) || '';
+        setFormatResult({
+          output_path: out,
+          stats: { chapters: res.data?.chapter_count, project: res.data?.project_name },
+          chapters: res.data?.chapters,
+        });
+        setLastOutputPath(out);
+        return;
+      }
       if (mode === 'check') {
-        const res = await formatApi.checkFormat(file, template);
+        const res = await formatApi.checkFormat(file!, template);
         setCheckResult(res.data);
       } else if (mode === 'diff') {
-        const res = await formatApi.diffFormat(file, template);
+        const res = await formatApi.diffFormat(file!, template);
         setDiffResult(res.data);
       } else if (mode === 'beautify') {
-        const res = await formatApi.beautify(file);
+        const res = await formatApi.beautify(file!);
         setBeautifyResult(res.data);
       } else {
-        const res = await formatApi.format(file, template, 'format');
+        const res = await formatApi.format(file!, template, 'format');
         setFormatResult(res.data);
+        const out = (res.data as Record<string, unknown>)?.output_path as string || '';
+        setLastOutputPath(out);
       }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : '操作失败');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const downloadBlob = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  const handleExport = async (target: OutputFormat) => {
+    if (!file) {
+      setExportError('请先上传文件');
+      return;
+    }
+    setExporting(target);
+    setExportError('');
+    try {
+      const baseName = file.name.replace(/\.docx?$/i, '');
+      if (target === 'docx' && lastOutputPath) {
+        const link = document.createElement('a');
+        link.href = formatApi.downloadOutput(lastOutputPath);
+        link.download = `${baseName}.docx`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        return;
+      }
+      const res = target === 'docx'
+        ? await formatApi.exportFormattedDocx(file, template)
+        : target === 'doc'
+          ? await formatApi.exportDoc(file, template, true)
+          : await formatApi.exportPdf(file, template, true);
+      const blob = res.data as unknown;
+      if (!(blob instanceof Blob)) {
+        throw new Error('后端未返回文件内容（可能是错误响应）');
+      }
+      downloadBlob(blob, `${baseName}.${target}`);
+    } catch (e: unknown) {
+      setExportError(e instanceof Error ? e.message : `${target} 导出失败`);
+    } finally {
+      setExporting(null);
     }
   };
 
@@ -572,6 +734,7 @@ export default function FormatPage() {
     if (!formatResult) return null;
     const data = formatResult as Record<string, unknown>;
     const stats = data.stats as Record<string, unknown> || {};
+    const projectChapters = data.chapters as Array<{ id: string; title: string; word_count: number; status: string }> | undefined;
 
     return (
       <div style={{ marginTop: '20px', padding: '20px', background: '#ecfdf5', borderRadius: '12px' }}>
@@ -579,37 +742,96 @@ export default function FormatPage() {
           <CheckCircle size={20} color="#059669" />
           <span style={{ fontSize: '16px', fontWeight: 600, color: '#059669' }}>排版完成</span>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '12px' }}>
-          <div style={{ fontSize: '13px' }}>处理段落: <strong>{stats.paragraphs as number || 0}</strong></div>
-          <div style={{ fontSize: '13px' }}>标题格式化: <strong>{stats.headings as number || 0}</strong></div>
-          <div style={{ fontSize: '13px' }}>正文格式化: <strong>{stats.body as number || 0}</strong></div>
-          <div style={{ fontSize: '13px' }}>表格格式化: <strong>{stats.tables as number || 0}</strong></div>
-        </div>
+        {stats.project ? (
+          <div style={{ fontSize: '13px', marginBottom: '8px' }}>项目: <strong>{String(stats.project)}</strong>，共 <strong>{String(stats.chapters || 0)}</strong> 个章节</div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '12px' }}>
+            <div style={{ fontSize: '13px' }}>处理段落: <strong>{stats.paragraphs as number || 0}</strong></div>
+            <div style={{ fontSize: '13px' }}>标题格式化: <strong>{stats.headings as number || 0}</strong></div>
+            <div style={{ fontSize: '13px' }}>正文格式化: <strong>{stats.body as number || 0}</strong></div>
+            <div style={{ fontSize: '13px' }}>表格格式化: <strong>{stats.tables as number || 0}</strong></div>
+          </div>
+        )}
+        {projectChapters && projectChapters.length > 0 && (
+          <div style={{ marginTop: '10px', maxHeight: '180px', overflowY: 'auto', background: 'white', borderRadius: '6px', padding: '8px' }}>
+            <div style={{ fontSize: '12px', fontWeight: 500, marginBottom: '4px', color: 'var(--color-text-secondary)' }}>包含的章节：</div>
+            {projectChapters.map(c => (
+              <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', fontSize: '12px', borderBottom: '1px solid #f1f5f9' }}>
+                <span>• {c.title}</span>
+                <span style={{ color: 'var(--color-text-secondary)' }}>{c.word_count || 0} 字 · {c.status}</span>
+              </div>
+            ))}
+          </div>
+        )}
         {data.output_path ? (
           <div style={{ marginTop: '12px' }}>
-            <button
-              onClick={() => {
-                const path = data.output_path as string;
-                const link = document.createElement('a');
-                link.href = `/api/format/download?path=${encodeURIComponent(path)}`;
-                link.download = '';
-                link.click();
-              }}
-              style={{
-                padding: '8px 16px',
-                background: '#059669',
-                color: 'white',
-                border: 'none',
-                borderRadius: '6px',
-                cursor: 'pointer',
-                fontSize: '13px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-              }}
-            >
-              <Download size={14} /> 下载排版后文件
-            </button>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <button
+                onClick={() => handleExport('docx')}
+                disabled={exporting !== null}
+                style={{
+                  padding: '8px 14px',
+                  background: '#059669',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: exporting !== null ? 'not-allowed' : 'pointer',
+                  opacity: exporting !== null ? 0.6 : 1,
+                  fontSize: '13px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                <FileType size={14} /> 下载 docx
+              </button>
+              <button
+                onClick={() => handleExport('doc')}
+                disabled={exporting !== null}
+                style={{
+                  padding: '8px 14px',
+                  background: '#0f766e',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: exporting !== null ? 'not-allowed' : 'pointer',
+                  fontSize: '13px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  opacity: exporting !== null ? 0.7 : 1,
+                }}
+              >
+                {exporting === 'doc' ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />} 导出 doc
+              </button>
+              <button
+                onClick={() => handleExport('pdf')}
+                disabled={exporting !== null}
+                style={{
+                  padding: '8px 14px',
+                  background: '#be185d',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: exporting !== null ? 'not-allowed' : 'pointer',
+                  fontSize: '13px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  opacity: exporting !== null ? 0.7 : 1,
+                }}
+              >
+                {exporting === 'pdf' ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />} 导出 PDF
+              </button>
+            </div>
+            {exportError && (
+              <div style={{ marginTop: '8px', padding: '6px 10px', background: '#fef2f2', color: '#dc2626', borderRadius: '6px', fontSize: '12px' }}>
+                {exportError}
+              </div>
+            )}
+            <div style={{ marginTop: '8px', fontSize: '11px', color: '#475569' }}>
+              提示: docx 为唯一中间格式，doc / PDF 由 LibreOffice 实时转换导出。
+            </div>
           </div>
         ) : null}
       </div>
@@ -641,9 +863,11 @@ export default function FormatPage() {
               onClick={() => {
                 const path = data.output_path as string;
                 const link = document.createElement('a');
-                link.href = `/api/format/download?path=${encodeURIComponent(path)}`;
+                link.href = formatApi.downloadOutput(path);
                 link.download = '';
+                document.body.appendChild(link);
                 link.click();
+                document.body.removeChild(link);
               }}
               style={{
                 padding: '8px 16px',
@@ -669,28 +893,245 @@ export default function FormatPage() {
   const renderFormatTab = () => (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
       <div style={{ background: 'var(--color-surface)', borderRadius: '12px', padding: '24px', border: '1px solid var(--color-border)' }}>
-        <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '16px' }}>上传文件</h3>
+        <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '16px' }}>输入源</h3>
 
-        <div
-          onClick={() => fileInputRef.current?.click()}
-          style={{
-            border: '2px dashed var(--color-border)',
-            borderRadius: '12px',
-            padding: '40px',
-            textAlign: 'center',
-            cursor: 'pointer',
-            transition: 'all 0.2s',
-            background: file ? '#ecfdf5' : '#f8fafc',
-            borderColor: file ? '#059669' : 'var(--color-border)',
-          }}
-        >
-          <Upload size={32} color={file ? '#059669' : '#94a3b8'} style={{ margin: '0 auto 12px' }} />
-          <div style={{ fontSize: '14px', fontWeight: 500 }}>
-            {file ? file.name : '点击上传 .docx 文件'}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '16px' }}>
+          <div
+            onClick={() => { setSourceMode('project'); setError(''); }}
+            style={{
+              padding: '12px',
+              border: `2px solid ${sourceMode === 'project' ? 'var(--color-primary)' : 'var(--color-border)'}`,
+              borderRadius: '8px',
+              cursor: 'pointer',
+              background: sourceMode === 'project' ? '#eff6ff' : 'transparent',
+              textAlign: 'center',
+            }}
+          >
+            <FolderOpen size={20} color={sourceMode === 'project' ? 'var(--color-primary)' : '#94a3b8'} style={{ margin: '0 auto 4px' }} />
+            <div style={{ fontSize: '13px', fontWeight: 600 }}>项目章节</div>
+            <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)', marginTop: '2px' }}>从已生成项目</div>
           </div>
-          {file && <div style={{ fontSize: '12px', color: '#059669', marginTop: '4px' }}>文件大小: {(file.size / 1024).toFixed(1)} KB</div>}
+          <div
+            onClick={() => { setSourceMode('file'); setError(''); }}
+            style={{
+              padding: '12px',
+              border: `2px solid ${sourceMode === 'file' ? 'var(--color-primary)' : 'var(--color-border)'}`,
+              borderRadius: '8px',
+              cursor: 'pointer',
+              background: sourceMode === 'file' ? '#eff6ff' : 'transparent',
+              textAlign: 'center',
+            }}
+          >
+            <Upload size={20} color={sourceMode === 'file' ? 'var(--color-primary)' : '#94a3b8'} style={{ margin: '0 auto 4px' }} />
+            <div style={{ fontSize: '13px', fontWeight: 600 }}>上传文件</div>
+            <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)', marginTop: '2px' }}>上传 .docx</div>
+          </div>
         </div>
-        <input ref={fileInputRef} type="file" accept=".docx" onChange={handleFileChange} style={{ display: 'none' }} />
+
+        {sourceMode === 'project' ? (
+          <div>
+            <label style={{ fontSize: '13px', color: 'var(--color-text-secondary)', display: 'block', marginBottom: '6px' }}>选择项目</label>
+            <div ref={projectPickerRef} style={{ position: 'relative' }}>
+              <button
+                onClick={() => setProjectPickerOpen(v => !v)}
+                style={{
+                  width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '8px 12px', border: '1px solid var(--color-border)', borderRadius: '6px',
+                  background: 'var(--color-surface)', fontSize: '14px', cursor: 'pointer', textAlign: 'left',
+                }}
+              >
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {projects.find(p => p.id === selectedProjectId)?.name || '请选择项目'}
+                </span>
+                <ChevronDown size={14} color="var(--color-text-secondary)" style={{
+                  transform: projectPickerOpen ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform 0.2s',
+                }} />
+              </button>
+              {projectPickerOpen && (
+                <div style={{
+                  position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 50,
+                  background: 'white', border: '1px solid var(--color-border)', borderRadius: '8px',
+                  boxShadow: '0 4px 16px rgba(0,0,0,0.12)', maxHeight: '240px', overflowY: 'auto',
+                }}>
+                  {projects.length === 0 ? (
+                    <div style={{ padding: '12px', fontSize: '12px', color: 'var(--color-text-secondary)', textAlign: 'center' }}>
+                      暂无项目
+                    </div>
+                  ) : projects.map(p => (
+                    <div
+                      key={p.id}
+                      onClick={() => { setSelectedProjectId(p.id); setProjectPickerOpen(false); }}
+                      style={{
+                        padding: '8px 12px', cursor: 'pointer', fontSize: '13px',
+                        background: p.id === selectedProjectId ? '#eff6ff' : 'transparent',
+                        borderBottom: '1px solid #f1f5f9',
+                      }}
+                      onMouseEnter={(e) => { if (p.id !== selectedProjectId) (e.currentTarget as HTMLDivElement).style.background = '#f8fafc'; }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = p.id === selectedProjectId ? '#eff6ff' : 'transparent'; }}
+                    >
+                      {p.name}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            {(() => {
+              if (selectedProjectChapterCount === 0) {
+                if (selectedProjectHasOutline === false || selectedProjectHasOutline === null && selectedProjectId) {
+                  return (
+                    <div style={{ marginTop: '12px', padding: '14px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px' }}>
+                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
+                        <AlertCircle size={18} color="#dc2626" style={{ flexShrink: 0, marginTop: '1px' }} />
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: '13px', fontWeight: 600, color: '#991b1b' }}>
+                            项目尚未生成大纲
+                          </div>
+                          <div style={{ fontSize: '12px', color: '#7f1d1d', marginTop: '4px', lineHeight: 1.5 }}>
+                            文档输出依赖项目章节内容。请先到「投标生成」完成「大纲生成」和「正文生成」。
+                          </div>
+                          <div style={{ display: 'flex', gap: '6px', marginTop: '10px' }}>
+                            <button
+                              onClick={goToGenerate}
+                              style={{ padding: '6px 12px', background: '#dc2626', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontSize: '12px', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '4px' }}
+                            >
+                              前往投标生成 <ArrowRight size={12} />
+                            </button>
+                            <button
+                              onClick={() => setSourceMode('file')}
+                              style={{ padding: '6px 12px', background: 'white', color: '#dc2626', border: '1px solid #fca5a5', borderRadius: '5px', cursor: 'pointer', fontSize: '12px' }}
+                            >
+                              改为上传文件
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+                return (
+                  <div style={{ marginTop: '12px', padding: '14px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
+                      <AlertCircle size={18} color="#d97706" style={{ flexShrink: 0, marginTop: '1px' }} />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: '13px', fontWeight: 600, color: '#92400e' }}>
+                          项目已生成大纲，但尚未生成任何正文
+                        </div>
+                        <div style={{ fontSize: '12px', color: '#a16207', marginTop: '4px', lineHeight: 1.5 }}>
+                          请先到「投标生成」完成「正文生成」步骤。
+                        </div>
+                        <div style={{ display: 'flex', gap: '6px', marginTop: '10px' }}>
+                          <button
+                            onClick={goToGenerate}
+                            style={{ padding: '6px 12px', background: '#d97706', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontSize: '12px', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '4px' }}
+                          >
+                            前往生成正文 <ArrowRight size={12} />
+                          </button>
+                          <button
+                            onClick={() => setSourceMode('file')}
+                            style={{ padding: '6px 12px', background: 'white', color: '#d97706', border: '1px solid #fde68a', borderRadius: '5px', cursor: 'pointer', fontSize: '12px' }}
+                          >
+                            改为上传文件
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              }
+              const emptyCount = selectedProjectChapters.filter(c => c.has_content === false || (!c.has_content && (!c.word_count || c.word_count === 0))).length;
+              const hasAllEmpty = emptyCount === selectedProjectChapters.length;
+              const hasPartial = !hasAllEmpty && emptyCount > 0;
+              if (hasAllEmpty) {
+                return (
+                  <div style={{ marginTop: '12px', padding: '14px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
+                      <AlertCircle size={18} color="#dc2626" style={{ flexShrink: 0, marginTop: '1px' }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: '13px', fontWeight: 600, color: '#991b1b' }}>
+                          该项目所有 {selectedProjectChapters.length} 个章节都未生成正文
+                        </div>
+                        <div style={{ fontSize: '12px', color: '#7f1d1d', marginTop: '4px', lineHeight: 1.5 }}>
+                          文档输出依赖项目章节正文内容，请先到「投标生成」完成正文生成后再进行排版操作。
+                        </div>
+                        <div style={{ display: 'flex', gap: '6px', marginTop: '10px' }}>
+                          <button
+                            onClick={goToGenerate}
+                            style={{ padding: '6px 12px', background: '#dc2626', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontSize: '12px', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '4px' }}
+                          >
+                            前往生成正文 <ArrowRight size={12} />
+                          </button>
+                          <button
+                            onClick={() => setSourceMode('file')}
+                            style={{ padding: '6px 12px', background: 'white', color: '#dc2626', border: '1px solid #fca5a5', borderRadius: '5px', cursor: 'pointer', fontSize: '12px' }}
+                          >
+                            改为上传文件
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              }
+              if (hasPartial) {
+                return (
+                  <div style={{ marginTop: '12px', padding: '10px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '6px' }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '6px' }}>
+                      <AlertCircle size={14} color="#d97706" style={{ flexShrink: 0, marginTop: '1px' }} />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: '12px', color: '#92400e' }}>
+                          共有 {selectedProjectChapters.length} 个章节，其中 <strong>{emptyCount}</strong> 个未生成正文，将自动跳过。
+                        </div>
+                        <div style={{ maxHeight: '60px', overflowY: 'auto', marginTop: '4px', fontSize: '11px', color: '#a16207' }}>
+                          {selectedProjectChapters.slice(0, 5).map(c => {
+                            const isEmpty = c.has_content === false || (!c.has_content && (!c.word_count || c.word_count === 0));
+                            return <div key={c.id}>• {c.title} {isEmpty && '⚠️'}</div>;
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              }
+              return (
+                <div style={{ marginTop: '12px', padding: '10px', background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: '6px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <CheckCircle size={14} color="#059669" />
+                    <span style={{ fontSize: '12px', color: '#065f46', fontWeight: 500 }}>
+                      所有 {selectedProjectChapters.length} 个章节均已生成正文，可以进行排版
+                    </span>
+                  </div>
+                  <div style={{ maxHeight: '60px', overflowY: 'auto', marginTop: '4px', fontSize: '11px', color: '#047857' }}>
+                    {selectedProjectChapters.slice(0, 5).map(c => `• ${c.title} (${c.word_count || 0}字)`).join('\n')}
+                    {selectedProjectChapters.length > 5 && `\n...还有 ${selectedProjectChapters.length - 5} 个章节`}
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        ) : (
+          <div>
+            <div
+              onClick={() => fileInputRef.current?.click()}
+              style={{
+                border: '2px dashed var(--color-border)',
+                borderRadius: '12px',
+                padding: '40px',
+                textAlign: 'center',
+                cursor: 'pointer',
+                transition: 'all 0.2s',
+                background: file ? '#ecfdf5' : '#f8fafc',
+                borderColor: file ? '#059669' : 'var(--color-border)',
+              }}
+            >
+              <Upload size={32} color={file ? '#059669' : '#94a3b8'} style={{ margin: '0 auto 12px' }} />
+              <div style={{ fontSize: '14px', fontWeight: 500 }}>
+                {file ? file.name : '点击上传 .docx 文件'}
+              </div>
+              {file && <div style={{ fontSize: '12px', color: '#059669', marginTop: '4px' }}>文件大小: {(file.size / 1024).toFixed(1)} KB</div>}
+            </div>
+            <input ref={fileInputRef} type="file" accept=".docx" onChange={handleFileChange} style={{ display: 'none' }} />
+          </div>
+        )}
 
         <div style={{ marginTop: '16px' }}>
           <label style={{ fontSize: '13px', color: 'var(--color-text-secondary)', display: 'block', marginBottom: '6px' }}>排版模板</label>
@@ -716,46 +1157,128 @@ export default function FormatPage() {
         <div style={{ marginTop: '16px' }}>
           <label style={{ fontSize: '13px', color: 'var(--color-text-secondary)', display: 'block', marginBottom: '8px' }}>操作模式</label>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-            {modeOptions.map(opt => (
-              <div
-                key={opt.key}
-                onClick={() => setMode(opt.key)}
-                style={{
-                  padding: '10px',
-                  border: `2px solid ${mode === opt.key ? 'var(--color-primary)' : 'var(--color-border)'}`,
-                  borderRadius: '8px',
-                  cursor: 'pointer',
-                  background: mode === opt.key ? '#eff6ff' : 'transparent',
-                  transition: 'all 0.2s',
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', fontWeight: 600 }}>
-                  {opt.icon} {opt.label}
+            {modeOptions.map(opt => {
+              const disabled = sourceMode === 'project' && opt.key !== 'format';
+              return (
+                <div
+                  key={opt.key}
+                  onClick={() => !disabled && setMode(opt.key)}
+                  style={{
+                    padding: '10px',
+                    border: `2px solid ${mode === opt.key ? 'var(--color-primary)' : 'var(--color-border)'}`,
+                    borderRadius: '8px',
+                    cursor: disabled ? 'not-allowed' : 'pointer',
+                    background: mode === opt.key ? '#eff6ff' : 'transparent',
+                    transition: 'all 0.2s',
+                    opacity: disabled ? 0.5 : 1,
+                  }}
+                  title={disabled ? '项目源仅支持一键排版' : ''}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', fontWeight: 600 }}>
+                    {opt.icon} {opt.label}
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)', marginTop: '2px' }}>{opt.desc}</div>
                 </div>
-                <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)', marginTop: '2px' }}>{opt.desc}</div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 
-        <button
-          onClick={handleExecute}
-          disabled={loading || !file}
-          style={{
-            width: '100%',
-            marginTop: '16px',
-            padding: '10px',
-            background: loading || !file ? '#94a3b8' : 'var(--color-primary)',
-            color: 'white',
-            border: 'none',
-            borderRadius: '8px',
-            cursor: loading || !file ? 'not-allowed' : 'pointer',
-            fontSize: '14px',
-            fontWeight: 600,
-          }}
-        >
-          {loading ? '处理中...' : modeOptions.find(m => m.key === mode)?.label || '执行'}
-        </button>
+        {(() => {
+          const canExecute = (() => {
+            if (loading) return false;
+            if (sourceMode === 'file' && !file) return false;
+            if (sourceMode === 'project') {
+              if (!selectedProjectId) return false;
+              if (selectedProjectChapterCount === 0) return false;
+              const emptyCount = selectedProjectChapters.filter(c => c.has_content === false || (!c.has_content && (!c.word_count || c.word_count === 0))).length;
+              if (emptyCount === selectedProjectChapters.length) return false;
+            }
+            return true;
+          })();
+          return (
+            <button
+              onClick={handleExecute}
+              disabled={!canExecute}
+              style={{
+                width: '100%',
+                marginTop: '16px',
+                padding: '10px',
+                background: canExecute ? 'var(--color-primary)' : '#94a3b8',
+                color: 'white',
+                border: 'none',
+                borderRadius: '8px',
+                cursor: canExecute ? 'pointer' : 'not-allowed',
+                fontSize: '14px',
+                fontWeight: 600,
+              }}
+            >
+              {loading ? '处理中...' : (sourceMode === 'project' ? '一键排版项目' : (modeOptions.find(m => m.key === mode)?.label || '执行'))}
+            </button>
+          );
+        })()}
+
+        <div style={{ marginTop: '20px', paddingTop: '16px', borderTop: '1px solid var(--color-border)' }}>
+          <div style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <Download size={13} /> 快速导出（排版 + 格式转换一站式）
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '6px', marginBottom: '8px' }}>
+            {(['docx', 'doc', 'pdf'] as OutputFormat[]).map(fmt => {
+              const isActive = outputFormat === fmt;
+              const labelMap: Record<OutputFormat, string> = {
+                docx: 'DOCX (源)',
+                doc: 'DOC',
+                pdf: 'PDF',
+              };
+              return (
+                <div
+                  key={fmt}
+                  onClick={() => setOutputFormat(fmt)}
+                  style={{
+                    padding: '8px 4px',
+                    border: `2px solid ${isActive ? 'var(--color-primary)' : 'var(--color-border)'}`,
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    background: isActive ? '#eff6ff' : 'transparent',
+                    textAlign: 'center',
+                    fontSize: '12px',
+                    fontWeight: 500,
+                    color: isActive ? 'var(--color-primary)' : 'var(--color-text)',
+                  }}
+                >
+                  {labelMap[fmt]}
+                </div>
+              );
+            })}
+          </div>
+          <button
+            onClick={() => handleExport(outputFormat)}
+            disabled={!lastOutputPath || exporting !== null}
+            style={{
+              width: '100%',
+              padding: '8px',
+              background: !lastOutputPath || exporting !== null ? '#94a3b8' : '#0f766e',
+              color: 'white',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: !lastOutputPath || exporting !== null ? 'not-allowed' : 'pointer',
+              fontSize: '13px',
+              fontWeight: 500,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+            }}
+          >
+            {exporting ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+            {exporting ? '转换中...' : `导出为 ${outputFormat.toUpperCase()}`}
+          </button>
+          {exportError && (
+            <div style={{ marginTop: '6px', padding: '6px 10px', background: '#fef2f2', color: '#dc2626', borderRadius: '6px', fontSize: '12px' }}>
+              {exportError}
+            </div>
+          )}
+        </div>
       </div>
 
       <div style={{ background: 'var(--color-surface)', borderRadius: '12px', padding: '24px', border: '1px solid var(--color-border)' }}>
@@ -981,7 +1504,7 @@ export default function FormatPage() {
       <StepHeader
         step={4}
         title="文档输出"
-        subtitle="一键排版→格式检查→差异对比→PDF导出，模板灵活配置"
+        subtitle="一键排版→格式检查→差异对比→docx/doc/PDF 多格式导出"
         color="#475569"
       />
 

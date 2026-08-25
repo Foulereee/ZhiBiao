@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Bell, User, ChevronRight, LayoutDashboard, X } from 'lucide-react';
+import { Bell, User, ChevronRight, LayoutDashboard, X, LogOut, PanelLeftClose, PanelLeftOpen, FolderKanban } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 
 const pipelineMeta: Record<string, { label: string; step: number; color: string }> = {
@@ -20,10 +20,23 @@ const allSteps = [
 export default function Header() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { currentProjectId } = useAppStore();
+  const { currentProjectId, projects, user, logout, sidebarCollapsed, toggleSidebar } = useAppStore();
+  const currentProject = currentProjectId
+    ? projects.find(p => p.id === currentProjectId) || null
+    : null;
+  const projectName = currentProject?.name || '';
+  const projectLabel = projectName
+    ? `项目: ${projectName}`
+    : `项目: ${currentProjectId?.slice(0, 8) || ''}...`;
   const currentPath = location.pathname;
   const meta = pipelineMeta[currentPath];
   const [showNotif, setShowNotif] = useState(false);
+  const [showUserMenu, setShowUserMenu] = useState(false);
+
+  const handleLogout = () => {
+    logout();
+    navigate('/login');
+  };
 
   return (
     <header
@@ -38,7 +51,39 @@ export default function Header() {
         position: 'relative',
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <button
+          onClick={toggleSidebar}
+          aria-label={sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'}
+          title={sidebarCollapsed ? '展开侧边栏 (Ctrl+B)' : '折叠侧边栏 (Ctrl+B)'}
+          style={{
+            width: '32px',
+            height: '32px',
+            padding: 0,
+            borderRadius: '6px',
+            border: '1px solid var(--color-border)',
+            background: 'var(--color-surface)',
+            color: 'var(--color-text-secondary)',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+            transition: 'background 0.15s, color 0.15s',
+          }}
+          onMouseEnter={(e) => {
+            (e.currentTarget as HTMLButtonElement).style.background = '#f1f5f9';
+            (e.currentTarget as HTMLButtonElement).style.color = 'var(--color-primary)';
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLButtonElement).style.background = 'var(--color-surface)';
+            (e.currentTarget as HTMLButtonElement).style.color = 'var(--color-text-secondary)';
+          }}
+        >
+          {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+        </button>
+        <div style={{ width: '1px', height: '20px', background: 'var(--color-border)' }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}>
           <span
             onClick={() => navigate('/dashboard')}
@@ -103,14 +148,41 @@ export default function Header() {
         )}
 
         {currentProjectId && (
-          <div style={{
-            fontSize: '11px', color: 'var(--color-text-secondary)',
-            background: '#f1f5f9', padding: '2px 10px',
-            borderRadius: '10px', border: '1px solid #e2e8f0',
-          }}>
-            项目: {currentProjectId.slice(0, 8)}...
+          <div
+            title={projectName ? `项目名称：${projectName}\n项目 ID：${currentProjectId}` : `项目 ID：${currentProjectId}`}
+            style={{
+              fontSize: '11px',
+              color: 'var(--color-text-secondary)',
+              background: '#f1f5f9',
+              padding: '2px 10px',
+              borderRadius: '10px',
+              border: '1px solid #e2e8f0',
+              display: 'inline-flex',
+              alignItems: 'center',
+              maxWidth: '360px',
+              minWidth: 0,
+              cursor: 'default',
+            }}
+          >
+            <FolderKanban
+              size={11}
+              color="#64748b"
+              style={{ marginRight: '4px', flexShrink: 0 }}
+            />
+            <span
+              style={{
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                minWidth: 0,
+                flex: 1,
+              }}
+            >
+              {projectLabel}
+            </span>
           </div>
         )}
+        </div>
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
@@ -153,17 +225,77 @@ export default function Header() {
             </div>
           )}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}
-          onClick={() => navigate('/settings')}
-        >
-          <div style={{
-            width: '30px', height: '30px', borderRadius: '8px',
-            background: 'var(--color-primary-light)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}>
-            <User size={14} color="var(--color-primary)" />
+        <div style={{ position: 'relative' }}>
+          <div
+            style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}
+            onClick={() => setShowUserMenu(!showUserMenu)}
+          >
+            <div style={{
+              width: '30px', height: '30px', borderRadius: '8px',
+              background: 'var(--color-primary-light)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <User size={14} color="var(--color-primary)" />
+            </div>
+            <span style={{ fontSize: '13px', color: 'var(--color-text)', fontWeight: 500 }}>
+              {user?.name || '未登录'}
+            </span>
           </div>
-          <span style={{ fontSize: '13px', color: 'var(--color-text)', fontWeight: 500 }}>管理员</span>
+          {showUserMenu && (
+            <div style={{
+              position: 'absolute', top: '40px', right: '0',
+              width: '180px', background: 'var(--color-surface)',
+              borderRadius: '10px', border: '1px solid var(--color-border)',
+              boxShadow: '0 8px 24px rgba(0,0,0,0.12)', zIndex: 100,
+              overflow: 'hidden',
+            }}>
+              {user ? (
+                <>
+                  <div style={{
+                    padding: '10px 14px', borderBottom: '1px solid var(--color-border)',
+                    fontSize: '12px', color: 'var(--color-text-secondary)',
+                  }}>
+                    {user.email}
+                  </div>
+                  <button
+                    onClick={() => { navigate('/settings'); setShowUserMenu(false); }}
+                    style={{
+                      width: '100%', padding: '10px 14px', background: 'none',
+                      border: 'none', cursor: 'pointer', fontSize: '13px',
+                      color: 'var(--color-text)', textAlign: 'left',
+                      display: 'flex', alignItems: 'center', gap: '8px',
+                    }}
+                  >
+                    <User size={14} /> 个人设置
+                  </button>
+                  <button
+                    onClick={handleLogout}
+                    style={{
+                      width: '100%', padding: '10px 14px', background: 'none',
+                      border: 'none', cursor: 'pointer', fontSize: '13px',
+                      color: '#dc2626', textAlign: 'left',
+                      display: 'flex', alignItems: 'center', gap: '8px',
+                      borderTop: '1px solid var(--color-border)',
+                    }}
+                  >
+                    <LogOut size={14} /> 退出登录
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={() => { navigate('/login'); setShowUserMenu(false); }}
+                  style={{
+                    width: '100%', padding: '12px 14px', background: 'none',
+                    border: 'none', cursor: 'pointer', fontSize: '13px',
+                    color: 'var(--color-primary)', textAlign: 'center',
+                    fontWeight: 500,
+                  }}
+                >
+                  前往登录
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </header>

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   FileSearch, PenTool, ShieldCheck, FileText, Plus, ArrowRight,
@@ -63,10 +63,23 @@ export default function DashboardPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [expandedFlow, setExpandedFlow] = useState<number | null>(null);
+  const [projectPickerOpen, setProjectPickerOpen] = useState(false);
+  const pickerRef = useRef<HTMLDivElement>(null);
   const { setCurrentProject, currentProjectId } = useAppStore();
   const navigate = useNavigate();
 
   useEffect(() => { loadProjects(); }, []);
+
+  useEffect(() => {
+    if (!projectPickerOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
+        setProjectPickerOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [projectPickerOpen]);
 
   const loadProjects = async () => {
     try {
@@ -94,7 +107,8 @@ export default function DashboardPage() {
   };
 
   const currentProject = projects.find(p => p.id === currentProjectId);
-  const currentStep = currentProject ? (statusToStep[currentProject.status] ?? 0) : 0;
+  const displayedProject = currentProject || projects[0];
+  const currentStep = displayedProject ? (statusToStep[displayedProject.status] ?? 0) : 0;
 
   const totalProjects = projects.length;
   const completedProjects = projects.filter(p => p.status === 'completed' || p.status === 'archived').length;
@@ -148,40 +162,105 @@ export default function DashboardPage() {
         ))}
       </div>
 
-      {currentProject && (
+      {(currentProject || projects.length > 0) && (
         <div style={{
           background: 'var(--color-surface)', borderRadius: '14px', padding: '18px 24px',
           border: '1px solid var(--color-border)', marginBottom: '18px',
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: 0 }}>
               <div style={{
                 width: '34px', height: '34px', borderRadius: '10px',
                 background: `linear-gradient(135deg, ${pipelineSteps[Math.min(currentStep, 3)].color}, ${pipelineSteps[Math.min(currentStep, 3)].color}cc)`,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
               }}>
                 {(() => { const I = pipelineSteps[Math.min(currentStep, 3)].icon; return <I size={15} color="white" />; })()}
               </div>
-              <div>
-                <div style={{ fontSize: '14px', fontWeight: 600, color: '#0f172a', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  {currentProject.name}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div ref={pickerRef} style={{ position: 'relative', display: 'inline-block' }}>
+                  <button
+                    onClick={() => setProjectPickerOpen(v => !v)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '6px',
+                      padding: '4px 10px 4px 8px', background: projectPickerOpen ? '#f1f5f9' : 'transparent',
+                      border: '1px solid var(--color-border)', borderRadius: '6px',
+                      cursor: 'pointer', fontSize: '14px', fontWeight: 600, color: '#0f172a',
+                      maxWidth: '320px',
+                    }}
+                  >
+                    <FolderOpen size={13} color="var(--color-text-secondary)" style={{ flexShrink: 0 }} />
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {currentProject ? currentProject.name : projects[0]?.name || '选择项目'}
+                    </span>
+                    <ChevronDown size={12} color="var(--color-text-secondary)" style={{
+                      flexShrink: 0, transform: projectPickerOpen ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform 0.2s',
+                    }} />
+                  </button>
+                  {projectPickerOpen && (
+                    <div style={{
+                      position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 50,
+                      background: 'white', border: '1px solid var(--color-border)', borderRadius: '8px',
+                      boxShadow: '0 4px 16px rgba(0,0,0,0.12)', minWidth: '280px', maxWidth: '360px',
+                      maxHeight: '320px', overflowY: 'auto',
+                    }}>
+                      {projects.length === 0 ? (
+                        <div style={{ padding: '14px', fontSize: '12px', color: 'var(--color-text-secondary)', textAlign: 'center' }}>
+                          暂无项目
+                        </div>
+                      ) : projects.map(p => {
+                        const pStep = statusToStep[p.status] ?? 0;
+                        const st = statusMap[p.status] || { label: p.status, color: '#6b7280' };
+                        const isActive = p.id === currentProjectId;
+                        return (
+                          <div
+                            key={p.id}
+                            onClick={() => { setCurrentProject(p.id); setProjectPickerOpen(false); }}
+                            style={{
+                              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                              padding: '8px 12px', cursor: 'pointer',
+                              background: isActive ? '#eff6ff' : 'transparent',
+                              borderBottom: '1px solid #f1f5f9',
+                            }}
+                            onMouseEnter={(e) => { if (!isActive) (e.currentTarget as HTMLDivElement).style.background = '#f8fafc'; }}
+                            onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = isActive ? '#eff6ff' : 'transparent'; }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: 0 }}>
+                              {isActive && <CheckCircle2 size={12} color="var(--color-primary)" style={{ flexShrink: 0 }} />}
+                              <span style={{ fontSize: '12px', fontWeight: isActive ? 600 : 500, color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {p.name}
+                              </span>
+                            </div>
+                            <span style={{ fontSize: '9px', padding: '1px 5px', borderRadius: '4px', fontWeight: 500, background: `${st.color}10`, color: st.color, flexShrink: 0 }}>
+                              {st.label}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+                {currentProject && (
                   <span style={{
-                    fontSize: '10px', padding: '1px 7px', borderRadius: '5px', fontWeight: 500,
+                    fontSize: '10px', padding: '1px 7px', borderRadius: '5px', fontWeight: 500, marginLeft: '8px',
                     background: `${(statusMap[currentProject.status] || statusMap.created).color}12`,
                     color: (statusMap[currentProject.status] || statusMap.created).color,
                   }}>
                     {(statusMap[currentProject.status] || statusMap.created).label}
                   </span>
-                </div>
+                )}
                 <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)', marginTop: '1px' }}>当前项目进度</div>
               </div>
             </div>
             <button
-              onClick={() => navigate(pipelineSteps[Math.min(currentStep, 3)].path)}
+              onClick={() => {
+                if (!currentProject && projects[0]) setCurrentProject(projects[0].id);
+                navigate(pipelineSteps[Math.min(currentStep, 3)].path);
+              }}
               style={{
                 padding: '6px 14px', background: pipelineSteps[Math.min(currentStep, 3)].color,
                 color: 'white', border: 'none', borderRadius: '7px', cursor: 'pointer',
                 fontSize: '12px', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '4px',
+                flexShrink: 0,
               }}
             >
               继续工作 <ArrowRight size={13} />

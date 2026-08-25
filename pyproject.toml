@@ -15,6 +15,7 @@ dependencies = [
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
     "litellm>=1.0",
+    "openai>=1.0",
     "langgraph>=0.2",
     "langchain-core>=0.3",
     "chromadb>=0.5",
@@ -41,6 +42,14 @@ dependencies = [
     "apprise>=1.8",
     "sentence-transformers>=3.0",
 ]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["services*", "core*"]
+exclude = ["tests*", "docs*"]
 
 [project.optional-dependencies]
 dev = [
