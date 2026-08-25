@@ -1,86 +1,290 @@
-version: "3.8"
+# ============================================================================
+# BidMaster Pro - 完整 Docker 编排
+#
+# 部署模式：
+#   A) 全量部署（默认）：docker compose --profile infra up -d
+#      → 拉起 postgres/redis/minio + api/celery/web
+#   B) 仅API（外部依赖）：docker compose up -d
+#      → 只启动 api/celery-worker/celery-beat，直连外部 MySQL/Redis/MinIO
+#
+# 服务拓扑：
+#   postgres ──┐
+#   redis ─────┼──→ api ────→ (对外 8000)
+#   minio ─────┘    ├─ celery-worker
+#                   └─ celery-beat
+#   web ──nginx──→ api (可选，--profile web)
+#
+# 数据持久化卷：pgdata / redisdata / miniodata / projects / chroma / uploads
+# ============================================================================
+
+x-api-env: &api-env
+  BMP_DEBUG: ${BMP_DEBUG:-false}
+  BMP_HOST: 0.0.0.0
+  BMP_PORT: 8000
+  # ── 数据库类型：postgresql（默认）/ mysql ──
+  # postgresql 时使用 BMP_DATABASE_URL；mysql 时使用 BMP_MYSQL_* 组合
+  BMP_DB_TYPE: ${BMP_DB_TYPE:-postgresql}
+  # BMP_DATABASE_URL 支持外部覆盖：设 BMP_DATABASE_URL 即可指向外部 PG
+  # 默认指向 compose 内 postgres 服务
+  BMP_DATABASE_URL: ${BMP_DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-bidmaster}}
+  BMP_MYSQL_HOST: ${BMP_MYSQL_HOST:-mysql}
+  BMP_MYSQL_PORT: ${BMP_MYSQL_PORT:-3306}
+  BMP_MYSQL_USER: ${MYSQL_USER:-bidmaster}
+  BMP_MYSQL_PASSWORD: ${MYSQL_PASSWORD:-bidmaster123}
+  BMP_MYSQL_DATABASE: ${MYSQL_DATABASE:-bidmaster}
+  # 入口脚本等待超时（秒）
+  DB_WAIT_TIMEOUT: 60
+  # Redis：REDIS_HOST 留空则用 compose 内 redis 服务名，设为外部 IP 则直连外部
+  BMP_REDIS_URL: redis://${REDIS_HOST:-redis}:${REDIS_INTERNAL_PORT:-6379}/0
+  CELERY_BROKER_URL: redis://${REDIS_HOST:-redis}:${REDIS_INTERNAL_PORT:-6379}/1
+  CELERY_RESULT_BACKEND: redis://${REDIS_HOST:-redis}:${REDIS_INTERNAL_PORT:-6379}/2
+  BMP_CHROMA_DIR: /app/chroma_db
+  BMP_PROJECTS_ROOT: /app/projects
+  # MinIO（默认 compose 内服务名 minio:9000，可覆盖为外部地址 host:port）
+  BMP_MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
+  BMP_MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+  BMP_MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+  BMP_MINIO_BUCKET: ${MINIO_BUCKET:-bidmaster}
+  # LLM
+  BMP_LLM_DEFAULT_MODEL: ${LLM_MODEL:-deepseek/deepseek-chat}
+  BMP_LLM_API_KEY: ${LLM_API_KEY:-}
+  BMP_LLM_API_BASE: ${LLM_API_BASE:-https://api.deepseek.com}
+  BMP_LLM_FALLBACK_MODES: ${LLM_FALLBACK_MODES:-ollama/qwen2.5}
+  BMP_LLM_MAX_RETRIES: 3
+  # Embedding
+  BMP_EMBEDDING_MODE: ${EMBEDDING_MODE:-api}
+  BMP_EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-v3}
+  BMP_EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+  BMP_EMBEDDING_API_BASE: ${EMBEDDING_API_BASE:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+  # MinerU OCR
+  BMP_MINERU_MODE: ${MINERU_MODE:-cloud}
+  BMP_MINERU_API_KEY: ${MINERU_API_KEY:-}
+  BMP_MINERU_ENDPOINT: ${MINERU_ENDPOINT:-https://mineru.net/api/v4}
+  # 业务参数
+  BMP_TENDER_TEXT_MAX_CHARS: 32000
+  # CORS 允许的来源（逗号分隔）
+  ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+  # Uvicorn worker 数
+  UVICORN_WORKERS: ${UVICORN_WORKERS:-2}
+
+x-api-volumes: &api-volumes
+  - projects:/app/projects
+  - chroma:/app/chroma_db
+  - uploads:/app/uploads
+  - ../skills:/app/skills:ro
+  - ../templates:/app/templates:ro
+
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
 
 services:
+  # ─────────────── PostgreSQL 16（--profile infra 启用）───────────────
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
+    profiles: ["infra"]
     environment:
-      POSTGRES_DB: bidmaster
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ${POSTGRES_DB:-bidmaster}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ../db/init_pg.sql:/docker-entrypoint-initdb.d/init_pg.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-bidmaster}"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 10s
+    logging: *default-logging
 
+  # ─────────────── MySQL 8（--profile infra + --profile mysql 启用）───────────────
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    profiles: ["infra", "mysql"]
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-bidmaster}
+      MYSQL_USER: ${MYSQL_USER:-bidmaster}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-bidmaster123}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-authentication-plugin=mysql_native_password
+      - --max_connections=200
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    volumes:
+      - mysqldata:/var/lib/mysql
+      - ../db/init_mysql.sql:/docker-entrypoint-initdb.d/init_mysql.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p${MYSQL_ROOT_PASSWORD:-root} --silent"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    logging: *default-logging
+
+  # ─────────────── Redis 7（--profile infra 启用）───────────────
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
+    profiles: ["infra"]
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
     ports:
-      - "6379:6379"
+      - "${REDIS_EXTERNAL_PORT:-16379}:6379"
     volumes:
       - redisdata:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
+    logging: *default-logging
 
+  # ─────────────── MinIO 对象存储（--profile infra 启用）───────────────
   minio:
     image: minio/minio:latest
+    restart: unless-stopped
+    profiles: ["infra"]
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "${MINIO_API_PORT:-19000}:9000"
+      - "${MINIO_CONSOLE_PORT:-19001}:9001"
     volumes:
       - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    logging: *default-logging
 
+  # MinIO 初始化：创建 bucket（仅首次运行，--profile infra 启用）
+  minio-init:
+    image: minio/mc:latest
+    profiles: ["infra"]
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin};
+      mc mb --ignore-existing local/${MINIO_BUCKET:-bidmaster};
+      mc anonymous set download local/${MINIO_BUCKET:-bidmaster} || true;
+      echo 'MinIO bucket 初始化完成';
+      "
+    restart: "no"
+
+  # ─────────────── FastAPI 主服务 ───────────────
   api:
     build:
-      context: .
+      context: ..
       dockerfile: docker/Dockerfile.api
+    image: bidmaster-pro-api:latest
+    restart: unless-stopped
     ports:
-      - "8000:8000"
-    environment:
-      BMP_DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/bidmaster
-      BMP_REDIS_URL: redis://redis:6379/0
-      BMP_LLM_API_KEY: ${LLM_API_KEY:-}
-      BMP_LLM_API_BASE: ${LLM_API_BASE:-https://api.deepseek.com}
-      BMP_LLM_DEFAULT_MODEL: ${LLM_MODEL:-deepseek/deepseek-chat}
+      - "${API_PORT:-8000}:8000"
+    environment: *api-env
+    # 弱依赖：compose 内有 infra 服务时等其启动，无则跳过（直连外部）
+    # 数据库/Redis/MinIO 就绪由 entrypoint.sh 统一等待
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
-        condition: service_healthy
-    volumes:
-      - ./projects:/app/projects
-      - ./chroma_db:/app/chroma_db
-      - ./skills:/app/skills
-      - ./templates:/app/templates
+        condition: service_started
+        required: false
+      minio:
+        condition: service_started
+        required: false
+    volumes: *api-volumes
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+    logging: *default-logging
 
+  # ─────────────── Celery Worker（异步任务）───────────────
   celery-worker:
     build:
-      context: .
+      context: ..
       dockerfile: docker/Dockerfile.api
-    command: celery -A services.celery_app worker --loglevel=info
-    environment:
-      BMP_DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/bidmaster
-      BMP_REDIS_URL: redis://redis:6379/0
+    image: bidmaster-pro-api:latest
+    restart: unless-stopped
+    command: celery -A services.celery_app worker --loglevel=info --concurrency=${CELERY_CONCURRENCY:-2}
+    environment: *api-env
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
-        condition: service_healthy
+        condition: service_started
+        required: false
+    volumes: *api-volumes
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+    logging: *default-logging
+
+  # ─────────────── Celery Beat（定时调度：资讯监控等）───────────────
+  celery-beat:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.api
+    image: bidmaster-pro-api:latest
+    restart: unless-stopped
+    command: celery -A services.celery_app beat --loglevel=info
+    environment: *api-env
+    depends_on:
+      redis:
+        condition: service_started
+        required: false
     volumes:
-      - ./projects:/app/projects
+      - celerybeat:/app/celerybeat
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+    logging: *default-logging
+
+  # ─────────────── Web 前端（可选，浏览器访问版）───────────────
+  web:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.web
+    image: bidmaster-pro-web:latest
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    profiles: ["web"]
+    logging: *default-logging
 
 volumes:
   pgdata:
+  mysqldata:
   redisdata:
   miniodata:
+  projects:
+  chroma:
+  uploads:
+  celerybeat:
+
+networks:
+  default:
+    name: bidmaster-net
+    driver: bridge

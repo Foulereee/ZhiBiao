@@ -43,6 +43,14 @@ dependencies = [
     "sentence-transformers>=3.0",
 ]
 
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["services*", "core*"]
+exclude = ["tests*", "docs*"]
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",

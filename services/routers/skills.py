@@ -7,8 +7,9 @@ from core.skill_engine.registry import SkillRegistry
 from core.skill_engine.base import SkillContext
 from services.database import get_db
 from services.llm_factory import get_llm_gateway
+from services.middleware.rbac_middleware import get_current_user
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
 @router.get("/")

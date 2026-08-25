@@ -1,18 +1,33 @@
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.skill_engine.base import SkillContext
+from services.database import get_db
 from services.generate.skills.ai_image_skill import AiImageSkill
 from services.llm_factory import get_llm_gateway
+from services.middleware.api_key import (
+    AuthPrincipal,
+    require_any_auth,
+    consume_credits,
+    refund_credits,
+)
 
-router = APIRouter()
+logger = logging.getLogger(__name__)
+
+# 路由级别：允许 API Key 或 Bearer Token 任一认证方式
+router = APIRouter(dependencies=[Depends(require_any_auth)])
 
 _ENV_PATH = Path(__file__).resolve().parent.parent.parent / ".env"
+
+# AI 配图单次调用消耗的 credits 数
+_IMG_CREDITS_COST = 5
 
 
 class ImageGenerateRequest(BaseModel):
@@ -29,7 +44,30 @@ class ProviderConfig(BaseModel):
 
 
 @router.post("/generate")
-async def generate_image(req: ImageGenerateRequest):
+async def generate_image(
+    req: ImageGenerateRequest,
+    principal: AuthPrincipal = Depends(require_any_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """生成 AI 配图。
+
+    - API Key (credits 类型)：扣 5 credits
+    - API Key (subscription 类型)：禁止访问算力服务
+    - Bearer Token：Web 端用户，无需扣 credits（按 RBAC 权限控制）
+    """
+    # API Key 类型校验：算力服务仅允许 credits 类型
+    if principal.is_api_key:
+        if principal.api_key.type != "credits":
+            raise HTTPException(
+                status_code=403,
+                detail="AI 配图是算力服务，需要 credits 类型的 API Key",
+            )
+        if principal.api_key.credits_remaining < _IMG_CREDITS_COST:
+            raise HTTPException(
+                status_code=402,
+                detail=f"Credits 余额不足：需要 {_IMG_CREDITS_COST}，剩余 {principal.api_key.credits_remaining}",
+            )
+
     skill = AiImageSkill()
     gateway = get_llm_gateway()
 
@@ -60,12 +98,44 @@ async def generate_image(req: ImageGenerateRequest):
         parameters=parameters,
     )
 
-    result = await skill.safe_execute(ctx)
+    # 先扣费（避免白嫖）
+    if principal.is_api_key and not principal.is_dev:
+        await consume_credits(
+            db, principal.api_key, _IMG_CREDITS_COST,
+            endpoint="/api/ai-image/generate", method="POST",
+        )
 
-    if not result.success:
-        raise HTTPException(status_code=500, detail=result.error)
+    try:
+        result = await skill.safe_execute(ctx)
 
-    return {"success": True, "data": result.data}
+        if not result.success:
+            # 失败退款
+            if principal.is_api_key and not principal.is_dev:
+                await refund_credits(
+                    db, principal.api_key, _IMG_CREDITS_COST,
+                    endpoint="/api/ai-image/generate",
+                )
+            raise HTTPException(status_code=500, detail=result.error)
+
+        return {
+            "success": True,
+            "data": result.data,
+            "credits_cost": _IMG_CREDITS_COST if principal.is_api_key else 0,
+            "credits_remaining": principal.api_key.credits_remaining if principal.is_api_key else None,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        # 异常退款
+        if principal.is_api_key and not principal.is_dev:
+            try:
+                await refund_credits(
+                    db, principal.api_key, _IMG_CREDITS_COST,
+                    endpoint="/api/ai-image/generate",
+                )
+            except Exception as refund_err:
+                logger.error(f"退款失败: {refund_err}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/providers")
@@ -94,7 +164,7 @@ async def list_providers():
         },
     ]
 
-    return {"providers": providers}
+    return {"providers": providers, "credits_cost_per_image": _IMG_CREDITS_COST}
 
 
 @router.put("/config")

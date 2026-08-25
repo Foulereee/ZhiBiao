@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+
+import bcrypt
 from collections import defaultdict
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -16,8 +18,9 @@ from services.models import (
     RBACUserRole,
     RBACRolePermission,
 )
+from services.middleware.rbac_middleware import get_current_user
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
 class RoleCreate(BaseModel):
@@ -141,7 +144,7 @@ DEFAULT_ROLES = {
 
 
 def _hash_password(password: str) -> str:
-    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
 @router.get("/roles")

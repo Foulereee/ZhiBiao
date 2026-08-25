@@ -8,6 +8,7 @@
 import json
 import logging
 import time
+from collections import deque
 from typing import AsyncGenerator, Any, Callable
 
 from openai import AsyncOpenAI, APIError, APITimeoutError, APIConnectionError
@@ -24,9 +25,9 @@ class LLMGateway:
         self.providers = config.get("providers", [])
         self.default_model = config.get("default_model", "deepseek/deepseek-chat")
         self.fallback_models = config.get("fallback_models", [])
-        self.max_retries = config.get("max_retries", 3)
+        self.max_retries = config.get("max_retries", 2)
         self.json_repair = JsonRepairEngine()
-        self._token_usage: list[dict] = []
+        self._token_usage: deque[dict] = deque(maxlen=10000)  # 限制最大存储量，防止内存泄漏
 
         # 从 default_model 中提取实际模型名（去掉 provider 前缀）
         self._resolved_model = self._strip_provider_prefix(self.default_model)
@@ -209,7 +210,7 @@ class LLMGateway:
             f"max_tokens={max_tokens or 'default'}"
         )
 
-        max_attempts = 3  # 与 OpenBidKit 一致：1次正常 + 2次重试
+        max_attempts = 2  # 1次正常 + 1次重试，降低尾部延迟
         last_error = None
 
         for attempt in range(max_attempts):
@@ -275,15 +276,70 @@ class LLMGateway:
         model: str | None = None,
         temperature: float = 0.7,
     ) -> AsyncGenerator[str, None]:
-        result = await self.chat(
-            messages=messages,
-            model=model,
-            temperature=temperature,
-            stream=True,
-        )
-        if isinstance(result, AsyncGenerator):
-            async for chunk in result:
-                yield chunk
+        """流式聊天，带错误处理和重试。
+
+        改进：
+        1. 外层 try/except 捕获流式传输中的所有异常
+        2. 流式中断时尝试重新发起请求（最多重试 max_retries 次）
+        3. 重试时会带上已收集的内容作为前缀提示，避免重复生成
+        """
+        model_name = model or self._resolved_model
+        collected_chunks: list[str] = []
+        last_error = None
+
+        for attempt in range(self.max_retries):
+            current_model = self._get_model_for_attempt(attempt, model_name)
+            try:
+                # 如果是重试且有已收集内容，将已收集内容注入 messages
+                retry_messages = messages
+                if attempt > 0 and collected_chunks:
+                    prefix = "".join(collected_chunks)
+                    retry_messages = messages + [
+                        {"role": "assistant", "content": prefix},
+                        {"role": "user", "content": "请继续从上次中断的地方继续输出，不要重复已输出的内容。"},
+                    ]
+                    logger.info(
+                        f"[LLM.stream_chat] 重试 attempt={attempt+1}, "
+                        f"已收集{len(prefix)}字符, 将请求续写"
+                    )
+
+                response = await self._client.chat.completions.create(
+                    model=current_model,
+                    messages=retry_messages,
+                    temperature=temperature,
+                    max_tokens=8192,
+                    stream=True,
+                )
+                logger.info(f"[LLM] 流式响应开始 model={current_model}, attempt={attempt+1}")
+
+                # 消费流式响应
+                async for chunk in self._stream_response(response):
+                    collected_chunks.append(chunk)
+                    yield chunk
+
+                # 流式正常完成
+                return
+
+            except (APITimeoutError, APIConnectionError, APIError) as e:
+                last_error = e
+                logger.error(
+                    f"[LLM.stream_chat] 流式中断 model={current_model}, "
+                    f"attempt={attempt+1}/{self.max_retries}, 已收集{len(collected_chunks)}个chunk, "
+                    f"错误={str(e)[:200]}"
+                )
+                if attempt < self.max_retries - 1:
+                    logger.info(f"[LLM.stream_chat] 准备重试...")
+                    continue
+            except Exception as e:
+                last_error = e
+                logger.error(f"[LLM.stream_chat] 未知异常: {e}")
+                if attempt < self.max_retries - 1:
+                    continue
+
+        # 所有重试用尽
+        if last_error:
+            logger.error(f"[LLM.stream_chat] 所有重试失败: {last_error}")
+            raise LLMGatewayError(f"流式聊天所有重试失败: {last_error}") from last_error
 
     def _get_model_for_attempt(self, attempt: int, original_model: str) -> str:
         """根据重试次数选择模型（支持降级）"""
@@ -312,10 +368,31 @@ class LLMGateway:
         )
 
     async def _stream_response(self, response) -> AsyncGenerator[str, None]:
-        async for chunk in response:
-            delta = chunk.choices[0].delta if chunk.choices else None
-            if delta and delta.content:
-                yield delta.content
+        """流式响应处理，带错误恢复。
+
+        改进：
+        1. 捕获流式迭代中的异常，避免直接终止生成器
+        2. 对空 choices 做防御处理
+        3. 遇到错误时 yield 特殊标记，让上层感知
+        """
+        try:
+            async for chunk in response:
+                try:
+                    if not chunk.choices:
+                        continue
+                    delta = chunk.choices[0].delta
+                    if delta and delta.content:
+                        yield delta.content
+                except (IndexError, AttributeError) as e:
+                    logger.warning(f"[LLM._stream_response] chunk解析异常(已跳过): {e}")
+                    continue
+        except (APITimeoutError, APIConnectionError, APIError) as e:
+            logger.error(f"[LLM._stream_response] 流式传输中断: {e}")
+            # 向上层发出错误信号，而不是静默终止
+            raise
+        except Exception as e:
+            logger.error(f"[LLM._stream_response] 未知错误: {e}")
+            raise
 
     def _record_usage(self, model: str, usage: Any):
         if usage:
@@ -343,14 +420,17 @@ class LLMGateway:
         tool_choice: str = "auto",
         model: str | None = None,
         temperature: float = 0.3,
+        max_tokens: int | None = None,
     ) -> ToolCallResponse:
         """支持 function calling 的聊天接口"""
         model_name = model or self._resolved_model
+        effective_max_tokens = max_tokens or 8192
 
         kwargs: dict = {
             "model": model_name,
             "messages": messages,
             "temperature": temperature,
+            "max_tokens": effective_max_tokens,
         }
         if tools:
             kwargs["tools"] = tools

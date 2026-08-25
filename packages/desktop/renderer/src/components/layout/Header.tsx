@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Bell, User, ChevronRight, LayoutDashboard, X, LogOut } from 'lucide-react';
+import { Bell, User, ChevronRight, LayoutDashboard, X, LogOut, PanelLeftClose, PanelLeftOpen, FolderKanban } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 
 const pipelineMeta: Record<string, { label: string; step: number; color: string }> = {
@@ -20,7 +20,14 @@ const allSteps = [
 export default function Header() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { currentProjectId, user, logout } = useAppStore();
+  const { currentProjectId, projects, user, logout, sidebarCollapsed, toggleSidebar } = useAppStore();
+  const currentProject = currentProjectId
+    ? projects.find(p => p.id === currentProjectId) || null
+    : null;
+  const projectName = currentProject?.name || '';
+  const projectLabel = projectName
+    ? `项目: ${projectName}`
+    : `项目: ${currentProjectId?.slice(0, 8) || ''}...`;
   const currentPath = location.pathname;
   const meta = pipelineMeta[currentPath];
   const [showNotif, setShowNotif] = useState(false);
@@ -44,7 +51,39 @@ export default function Header() {
         position: 'relative',
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <button
+          onClick={toggleSidebar}
+          aria-label={sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'}
+          title={sidebarCollapsed ? '展开侧边栏 (Ctrl+B)' : '折叠侧边栏 (Ctrl+B)'}
+          style={{
+            width: '32px',
+            height: '32px',
+            padding: 0,
+            borderRadius: '6px',
+            border: '1px solid var(--color-border)',
+            background: 'var(--color-surface)',
+            color: 'var(--color-text-secondary)',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+            transition: 'background 0.15s, color 0.15s',
+          }}
+          onMouseEnter={(e) => {
+            (e.currentTarget as HTMLButtonElement).style.background = '#f1f5f9';
+            (e.currentTarget as HTMLButtonElement).style.color = 'var(--color-primary)';
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLButtonElement).style.background = 'var(--color-surface)';
+            (e.currentTarget as HTMLButtonElement).style.color = 'var(--color-text-secondary)';
+          }}
+        >
+          {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+        </button>
+        <div style={{ width: '1px', height: '20px', background: 'var(--color-border)' }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}>
           <span
             onClick={() => navigate('/dashboard')}
@@ -109,14 +148,41 @@ export default function Header() {
         )}
 
         {currentProjectId && (
-          <div style={{
-            fontSize: '11px', color: 'var(--color-text-secondary)',
-            background: '#f1f5f9', padding: '2px 10px',
-            borderRadius: '10px', border: '1px solid #e2e8f0',
-          }}>
-            项目: {currentProjectId.slice(0, 8)}...
+          <div
+            title={projectName ? `项目名称：${projectName}\n项目 ID：${currentProjectId}` : `项目 ID：${currentProjectId}`}
+            style={{
+              fontSize: '11px',
+              color: 'var(--color-text-secondary)',
+              background: '#f1f5f9',
+              padding: '2px 10px',
+              borderRadius: '10px',
+              border: '1px solid #e2e8f0',
+              display: 'inline-flex',
+              alignItems: 'center',
+              maxWidth: '360px',
+              minWidth: 0,
+              cursor: 'default',
+            }}
+          >
+            <FolderKanban
+              size={11}
+              color="#64748b"
+              style={{ marginRight: '4px', flexShrink: 0 }}
+            />
+            <span
+              style={{
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                minWidth: 0,
+                flex: 1,
+              }}
+            >
+              {projectLabel}
+            </span>
           </div>
         )}
+        </div>
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>

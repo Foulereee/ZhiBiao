@@ -1,16 +1,109 @@
-FROM python:3.12-slim
+# ============================================================================
+# BidMaster Pro API 镜像
+# 多阶段构建：builder（编译依赖）→ runtime（精简运行时）
+# ============================================================================
+# 构建：
+#   docker build -f docker/Dockerfile.api -t bidmaster-pro-api:latest .
+# ============================================================================
+
+# ─────────────── Stage 1: builder ───────────────
+FROM python:3.12-slim AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# 编译期系统依赖（build-essential 编译 C 扩展；libpq-dev 编译 asyncpg；
+# libjpeg-dev/zlib1g-dev 编译 Pillow/pymupdf；libffi-dev 编译 cryptography）
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        libpq-dev \
+        libjpeg-dev \
+        zlib1g-dev \
+        libffi-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
+# 先只拷贝依赖声明 + readme，最大化利用层缓存
+COPY pyproject.toml README.md ./
+
+# 安装生产依赖到独立 prefix
+RUN pip install --prefix=/install .
+
+
+# ─────────────── Stage 2: runtime ───────────────
+FROM python:3.12-slim AS runtime
+
+# PYTHONPATH=/app 确保 /app 完整源码优先于 site-packages
+# （避免 builder 阶段 pip install . 残留的不完整 services 包覆盖 /app 源码）
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    TZ=Asia/Shanghai \
+    BMP_HOST=0.0.0.0 \
+    BMP_PORT=8000 \
+    PYTHONPATH=/app
+
+# 运行期系统依赖：
+#   libpq5              — asyncpg 运行
+#   libjpeg62-turbo     — Pillow/pymupdf 运行
+#   libgomp1            — onnxruntime（chromadb embedding）
+#   libgl1              — 部分 PDF/图像处理
+#   libpango-1.0-0 libpangoft2-1.0-0 libcairo2 libgdk-pixbuf-xlib-2.0-0 — weasyprint
+#   curl                — healthcheck
+#   tzdata              — 时区
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
+        libpq5 \
+        libjpeg62-turbo \
+        libgomp1 \
+        libgl1 \
+        libpango-1.0-0 \
+        libpangoft2-1.0-0 \
+        libcairo2 \
+        libgdk-pixbuf-xlib-2.0-0 \
+        curl \
+        tzdata \
+    && ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
     && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml .
-RUN pip install --no-cache-dir -e ".[dev]"
+# 创建非 root 用户
+RUN groupadd -r app && useradd -r -g app -d /app -s /sbin/nologin app
 
-COPY . .
+WORKDIR /app
+
+# 从 builder 拷贝已安装的 Python 依赖
+COPY --from=builder /install /usr/local
+
+# 删除 site-packages 中 pip install 产生的项目包（services/core），
+# 避免不完整安装覆盖 /app 下的完整源码
+RUN rm -rf /usr/local/lib/python3.12/site-packages/services \
+           /usr/local/lib/python3.12/site-packages/core \
+           /usr/local/lib/python3.12/site-packages/bidmaster_pro*
+
+# 拷贝应用源码（.dockerignore 会过滤掉 venv/node_modules/数据目录等）
+COPY --chown=app:app . .
+
+# 显式拷贝 middleware 目录（防止个别文件因上下文缓存/同步问题遗漏）
+COPY --chown=app:app services/middleware/ /app/services/middleware/
+
+# 拷贝入口脚本（按 BMP_DB_TYPE 等待对应数据库就绪）
+COPY --chown=app:app docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# 创建运行时数据目录并赋权（通过 volume 挂载持久化）
+RUN mkdir -p /app/projects /app/chroma_db /app/uploads /app/skills /app/templates \
+    && chown -R app:app /app
+
+USER app
+
+ENTRYPOINT ["/entrypoint.sh"]
 
 EXPOSE 8000
 
-CMD ["uvicorn", "services.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# 健康检查：调用 /api/health 端点
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:8000/api/health || exit 1
+
+# 生产启动：关掉 --reload，多 worker（按 CPU 调整）
+CMD ["sh", "-c", "uvicorn services.main:app --host 0.0.0.0 --port ${BMP_PORT:-8000} --workers ${UVICORN_WORKERS:-2} --no-access-log"]

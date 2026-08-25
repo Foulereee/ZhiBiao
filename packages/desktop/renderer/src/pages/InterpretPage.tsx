@@ -147,6 +147,7 @@ export default function InterpretPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
   const [currentStep, setCurrentStep] = useState<Step>('upload');
+  const [maxReachedStep, setMaxReachedStep] = useState<Step>('upload');
   const [loading, setLoading] = useState(false);
   const [documents, setDocuments] = useState<DocInfo[]>([]);
   const [parseResult, setParseResult] = useState<ParseResult | null>(null);
@@ -211,7 +212,7 @@ export default function InterpretPage() {
             doc_metadata: data.parse_info.doc_metadata || {},
           });
         }
-        setCurrentStep('done');
+        resetToStep('done');
       } else if (data.has_parsed) {
         if (data.parse_info) {
           setParseResult({
@@ -223,16 +224,16 @@ export default function InterpretPage() {
             doc_metadata: data.parse_info.doc_metadata || {},
           });
         }
-        setCurrentStep('interpret');
+        resetToStep('interpret');
       } else if (data.has_documents) {
-        setCurrentStep('parse');
+        resetToStep('parse');
       } else {
-        setCurrentStep('upload');
+        resetToStep('upload');
         setParseResult(null);
         setInterpretResult(null);
       }
     } catch {
-      setCurrentStep('upload');
+      resetToStep('upload');
       setParseResult(null);
       setInterpretResult(null);
     } finally {
@@ -248,7 +249,7 @@ export default function InterpretPage() {
       await interpretApi.upload(selectedProjectId, files);
       setFiles([]);
       await loadDocuments();
-      setCurrentStep('parse');
+      advanceToStep('parse');
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || '上传失败';
       setError(msg);
@@ -265,7 +266,7 @@ export default function InterpretPage() {
       const res = await interpretApi.parse(selectedProjectId);
       setParseResult(res.data as ParseResult);
       await loadDocuments();
-      setCurrentStep('interpret');
+      advanceToStep('interpret');
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || '解析失败';
       setError(msg);
@@ -281,7 +282,7 @@ export default function InterpretPage() {
     try {
       const res = await interpretApi.interpret(selectedProjectId);
       setInterpretResult(res.data as InterpretResult);
-      setCurrentStep('done');
+      advanceToStep('done');
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || '解读失败';
       setError(msg);
@@ -290,11 +291,26 @@ export default function InterpretPage() {
     }
   };
 
+  const advanceToStep = (step: Step) => {
+    const stepOrder: Step[] = ['upload', 'parse', 'interpret', 'done'];
+    const newIdx = stepOrder.indexOf(step);
+    const maxIdx = stepOrder.indexOf(maxReachedStep);
+    setCurrentStep(step);
+    if (newIdx > maxIdx) {
+      setMaxReachedStep(step);
+    }
+  };
+
+  const resetToStep = (step: Step) => {
+    setCurrentStep(step);
+    setMaxReachedStep(step);
+  };
+
   const goToStep = (step: Step) => {
     const stepOrder: Step[] = ['upload', 'parse', 'interpret', 'done'];
-    const currentIdx = stepOrder.indexOf(currentStep);
+    const maxIdx = stepOrder.indexOf(maxReachedStep);
     const targetIdx = stepOrder.indexOf(step);
-    if (targetIdx < currentIdx) {
+    if (targetIdx <= maxIdx) {
       setCurrentStep(step);
       setError('');
     }
@@ -322,6 +338,7 @@ export default function InterpretPage() {
   };
 
   const stepIndex = STEP_CONFIG.findIndex(s => s.key === currentStep);
+  const maxStepIdx = STEP_CONFIG.findIndex(s => s.key === maxReachedStep);
 
   const DIMENSION_META: Record<string, { label: string; icon: typeof BarChart3; color: string }> = {
     project_info: { label: '项目信息', icon: BookOpen, color: '#3b82f6' },
@@ -472,8 +489,9 @@ export default function InterpretPage() {
 
       <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
         {STEP_CONFIG.map((step, i) => {
-          const isCompleted = i < stepIndex;
           const isCurrent = i === stepIndex;
+          const isCompleted = i <= maxStepIdx && !isCurrent;
+          const isAccessible = i <= maxStepIdx;
           const Icon = step.icon;
           return (
             <div key={step.key} onClick={() => goToStep(step.key)}
@@ -481,7 +499,7 @@ export default function InterpretPage() {
                 background: isCurrent ? 'var(--color-primary)' : isCompleted ? '#eff6ff' : 'var(--color-surface)',
                 color: isCurrent ? 'white' : isCompleted ? 'var(--color-primary)' : 'var(--color-text-secondary)',
                 border: `1px solid ${isCurrent ? 'var(--color-primary)' : isCompleted ? '#bfdbfe' : 'var(--color-border)'}`,
-                cursor: isCompleted ? 'pointer' : 'default', transition: 'all 0.2s' }}>
+                cursor: isAccessible && !isCurrent ? 'pointer' : 'default', transition: 'all 0.2s' }}>
               {isCompleted ? <CheckCircle2 size={14} /> : <Icon size={14} />}
               {step.label}
             </div>

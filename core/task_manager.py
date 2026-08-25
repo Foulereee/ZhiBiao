@@ -61,6 +61,7 @@ class TaskManager:
 
     def __init__(self):
         self._tasks: dict[str, AsyncTask] = {}
+        self._running_tasks: set[asyncio.Task] = set()
         self._cleanup_interval = 300  # 5分钟清理一次
         self._max_task_age = 3600     # 1小时后清理
 
@@ -114,7 +115,9 @@ class TaskManager:
                 logger.error(f"[TaskManager] 任务失败 task_id={task.task_id}, "
                              f"error={e}")
 
-        asyncio.create_task(_run())
+        asyncio_task = asyncio.create_task(_run())
+        self._running_tasks.add(asyncio_task)
+        asyncio_task.add_done_callback(self._running_tasks.discard)
         return task
 
     def cleanup_old_tasks(self):

@@ -27,15 +27,43 @@ from core.exceptions import (
     ProjectNotFoundError,
 )
 from services.database import init_db, close_db, is_db_ready
-from services.routers import projects, interpret, generate, check, format_doc, skills, llm_config, news, knowledge, rbac, ai_image, auth, agent_runtime
+from services.routers import projects, interpret, generate, check, format_doc, skills, llm_config, news, knowledge, rbac, ai_image, auth, agent_runtime, mineru_config, api_key
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import asyncio
     from services.skill_bootstrap import register_builtin_skills
+    from core.task_manager import TaskManager
+    from services.database import async_session
     register_builtin_skills()
     await init_db()
+
+    # 同步预置数据源 (YAML -> DB),仅做幂等写入,不抛错
+    try:
+        from services.news.source_registry import sync_sources_to_db
+        async with async_session()() as _sdb:
+            synced = await sync_sources_to_db(_sdb)
+            await _sdb.commit()
+            if synced:
+                logging.getLogger("news").info(f"已同步 {synced} 个新数据源到注册表")
+    except Exception as _e:
+        logging.getLogger("news").warning(f"同步数据源失败 (可忽略): {_e}")
+
+    # Periodic TaskManager cleanup
+    async def _periodic_cleanup():
+        tm = TaskManager.instance()
+        while True:
+            await asyncio.sleep(tm._cleanup_interval)
+            tm.cleanup_old_tasks()
+
+    cleanup_task = asyncio.create_task(_periodic_cleanup())
     yield
+    cleanup_task.cancel()
+    try:
+        await cleanup_task
+    except asyncio.CancelledError:
+        pass
     await close_db()
 
 
@@ -46,12 +74,29 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+import os
+
+_electron_origins = [
+    "http://localhost:15168",     # Vite dev (项目定制端口)
+    "http://127.0.0.1:15168",
+    "http://localhost:5173",      # Vite dev (默认端口，兼容)
+    "http://127.0.0.1:5173",
+    "http://localhost:4173",      # Vite preview
+    "http://127.0.0.1:4173",
+    "app://.",                    # Electron file protocol
+    "file://",
+]
+_extra_origins = os.environ.get("ALLOWED_ORIGINS", "").strip()
+if _extra_origins:
+    _electron_origins.extend([o.strip() for o in _extra_origins.split(",") if o.strip()])
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_electron_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "Origin", "User-Agent", "X-Requested-With", "X-API-Key"],
+    max_age=600,
 )
 
 
@@ -111,6 +156,8 @@ app.include_router(knowledge.router, prefix="/api/knowledge", tags=["知识库"]
 app.include_router(rbac.router, prefix="/api/rbac", tags=["权限管理"])
 app.include_router(ai_image.router, prefix="/api/ai-image", tags=["AI配图"])
 app.include_router(agent_runtime.router, prefix="/api/agent", tags=["多Agent编排"])
+app.include_router(mineru_config.router, prefix="/api/mineru", tags=["MinerU OCR"])
+app.include_router(api_key.router, prefix="/api/api-keys", tags=["API Key 管理"])
 
 
 @app.get("/api/health")

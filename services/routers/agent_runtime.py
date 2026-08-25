@@ -19,6 +19,7 @@ from services.agents.agent_bootstrap import (
     register_all_tools,
 )
 from services.database import get_db
+from services.llm_factory import get_llm_gateway
 
 
 router = APIRouter(prefix="/agent", tags=["agent"])
@@ -60,7 +61,7 @@ def _setup_tool_registry(ctx: AgentContext):
 async def run_pipeline(req: RunPipelineRequest, db: AsyncSession = Depends(get_db)):
     """启动完整的多Agent流程"""
     try:
-        llm = LLMGateway()
+        llm = get_llm_gateway()
         ctx = _create_context(req.project_id, db, llm)
 
         # 初始化注册表和工具
@@ -115,7 +116,7 @@ async def run_pipeline(req: RunPipelineRequest, db: AsyncSession = Depends(get_d
 async def run_step(req: RunStepRequest, db: AsyncSession = Depends(get_db)):
     """执行单个Agent步骤"""
     try:
-        llm = LLMGateway()
+        llm = get_llm_gateway()
         ctx = _create_context(req.project_id, db, llm)
         agent_registry = create_agent_registry()
         _setup_tool_registry(ctx)
@@ -158,7 +159,7 @@ async def get_agent_status(project_id: str):
 async def resume_pipeline(project_id: str, db: AsyncSession = Depends(get_db)):
     """从检查点恢复执行"""
     try:
-        llm = LLMGateway()
+        llm = get_llm_gateway()
         ctx = _create_context(project_id, db, llm)
         agent_registry = create_agent_registry()
         _setup_tool_registry(ctx)
