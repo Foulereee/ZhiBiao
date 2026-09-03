@@ -356,6 +356,7 @@ if not gate_keeper.is_passed(project_id, "interpret"):
 
 ## 💬 联系作者
 
+✨ Star 项目
 扫码关注微信公众号，回复 **bidmaster** 即可获取：
 
 - 作者个人微信
