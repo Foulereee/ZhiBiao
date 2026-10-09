@@ -15,3 +15,6 @@
 *.xlsx binary
 *.woff binary
 *.woff2 binary
+
+# Windows 批处理必须 CRLF，否则 cmd 逐行解析失败
+*.bat text eol=crlf

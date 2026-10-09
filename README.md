@@ -39,31 +39,66 @@
 | --- | --- |
 | **导出 Word 时 Markdown 标记直接出现在正文** | 修正 Markdown → Word 渲染路径，标题 / 粗体 / 列表 / 表格按 Word 样式输出 |
 | **导出件封面、页脚缺失或页码错乱** | 补齐封面页与页脚页码，导出前重建分节属性，成果可直接交付 |
-| **缺字体导致排版走样（换机器就跑版）** | 新增 `services/format/font_utils.py`，统一字体解析与回退（正文宋体 / 标题黑体） |
-| **部分接口缺少鉴权，存在越权风险** | 为相关路由补齐认证依赖与 RBAC 校验，未登录不可访问 |
+| **导出 Word 字体不统一（同一行中文与数字两种字体）** | 定位到根因：`run.font.name` 只写 `w:ascii/w:hAnsi`、**不写 `w:eastAsia`**，中文字符于是回退 `docDefaults` 主题字体，而数字/英文仍按 ascii 用宋体。新增 `services/format/font_utils.py` 对打包好的 docx 做 5 步归一化（见下方实测） |
+| **排版链路的字体与未排版链路不一致（仿宋_GB2312 / 宋体混用）** | 按段落样式识别标题（Heading1~3 一律黑体），把误套上来的正文字体纠正掉，使 `apply_format=true/false` 两条导出链路字体一致 |
+| **新主机按示例部署后随机退出登录 / 401** | 登录会话保存在进程内字典，而示例配置给的是 `--workers 2`：多进程间会话不共享。已把 `docker/.env.docker.example` 固定为 `UVICORN_WORKERS=1` 并写明原因（生产实际也是 1） |
+| **Windows 下 `start-postgres.bat` / `stop-postgres.bat` 无法执行** | 这两个批处理原本是 LF 行尾，cmd 会逐行报"不是内部或外部命令"。已在 `.gitattributes` 固定 `*.bat text eol=crlf` |
+| **`alembic upgrade head` 在全新克隆上必然失败** | 仓库内确实没有 `db/migrations`（`alembic.ini` 指向它）。文档改为 `psql -f db/init_pg.sql`，并说明启动时 `init_db()` 会 `create_all` 补齐其余表（实测 22 张） |
+| **资讯中心抓取接口 500** | `services/news/fetchers.py` 直接 import 的 `feedparser` 没写进 `pyproject.toml`，已补齐（并补 `redis` / `minio` 等隐式依赖） |
+| **部分接口缺少鉴权，存在越权风险** | 为相关路由补齐认证依赖与 RBAC 校验，未登录不可访问（实测无 token 全部 401） |
 | **LLM 参数被中间层吞掉、报错不可见** | 网关改为 `openai.AsyncOpenAI` 直连兼容端点（不经 litellm 转发），超时与重试可控 |
-| **“执行检查中”长时间无响应** | 修正检查类 Skill 的超时与并发行为，长任务进度实时回传 |
+| **“执行检查中”长时间无响应** | 修正检查类 Skill 的超时与并发行为（`_check_timeout` / `_run_skill_limited`），长任务进度实时回传 |
 | **Agent 工具注册与上下文绑定异常** | 修复 `core/agent_framework/` 的工具注册、上下文绑定与数据库查询工具 |
-| **改配置把 `.env` 注释全冲掉** | 新增 `core/env_store.py`：无损改写 `.env`（保留注释、分组与顺序） |
+| **改配置把 `.env` 注释全冲掉** | 新增 `core/env_store.py`：无损改写 `.env`（保留注释、分组与顺序），写前备份 |
 | **容器启动不稳定** | 修正 `Dockerfile.api`、`docker-compose.yml`、`entrypoint.sh`、`nginx.conf` |
 
 ### ✨ 新增能力
 
 | 新功能 | 说明 |
 | --- | --- |
-| **纯 B/S 部署形态** | 前端构建产物由 nginx 托管、`/api` 反代到后端；浏览器打开即用，用户侧零安装（见下方架构图） |
-| **品牌与参数在线配置** | `GET/PUT /api/app-config`：平台名称、Logo、端口等写入 `.env` 即时生效，无需手改文件 |
-| **一键迁移工具链** | `deploy/`：`export_all.sh` / `import_all.sh` / `rebuild_and_verify.sh` / `seed_admin.py`，换主机时数据、上传件与站点配置一起搬 |
+| **投标检查 · AI 修复方案** | `POST /api/check/{project_id}/fix-plan` 逐项给出「改哪里、怎么改」，`GET …/fix-plan` 回读；方案与检查报告绑定留档 |
+| **投标检查 · 问题原文定位** | `GET …/fix-locate`、`…/fix-locate-all` 用 bigram + 段落切分把每个问题定位到项目章节的具体片段，返回可核对的原文摘录 |
+| **投标检查 · 一键应用修复** | `POST …/fix-apply` 把选中的修复写回章节正文，改前留底、可回溯 |
+| **投标检查 · 报告留存与导出** | 检查报告可导出 Word（`_build_check_report_docx`）、可导出 Markdown / PDF / HTML（`check_report_export_skill`），也可删除（`DELETE …/reports/{report_id}`） |
+| **投标检查 · 上传标书直接查** | 除「从项目生成」外新增「上传已有标书直接检查」，检查链路统一超时与并发上限（`_check_timeout` / `_run_skill_limited`），长任务不再假死 |
+| **投标生成 · 按大纲顺序生成** | `order_chapters_by_outline` / `_outline_node_order` 按大纲层级排序；`resolve_chapter_words` 解析章节字数；`build_chapter_system_prompt` 组装系统提示词；`_strip_duplicate_heading` 清理重复标题；并发生成有上限（`_gen_limited`） |
+| **文档输出 · 目录与多格式** | 一键插入目录并可**选目录级别**（`toc` / `toc_levels`）；docx 为唯一中间格式，doc / PDF 由 LibreOffice 实时转换，PDF 另有 WeasyPrint 兜底；三种格式导出后都过一遍字体归一化 |
+| **文档输出 · 导出前体检查验** | 未生成正文的章节自动跳过并明确提示，避免导出半成品；所有章节为空时直接拦下并引导去「投标生成」 |
+| **纯 B/S 部署形态** | 前端构建产物由 nginx 托管、`/api` 反代到后端；浏览器打开即用，用户侧零安装（见上方架构图与下方链路图） |
+| **窄屏 / 移动端适配** | 新增 `renderer/src/hooks/useIsNarrow.ts`，重做 AppLayout / Header / Sidebar 的三段式布局，手机浏览器可直接使用 |
+| **品牌与参数在线配置** | `GET/PUT /api/app-config`：平台名称、Logo、端口等写入 `.env` 即时生效，无需手改文件（写入走 `core/env_store.py`，不破坏注释） |
+| **时间与页码工具** | 新增 `utils/datetime.ts`（统一时区与展示格式）与 `utils/wordPage.ts`（Word 页码 / 分节处理） |
+| **一键迁移工具链** | `deploy/`：`export_all.sh` / `import_all.sh` / `rebuild_and_verify.sh` / `seed_admin.py`，换主机时数据、上传件与站点配置一起搬（`seed_admin.py` 实测幂等建 27 权限 / 4 角色 / 管理员） |
 | **部署手册与迁移方案** | `deploy/` 内附带《全新主机部署手册》《部署迁移方案》，新机器照抄即可 |
+| **可复现的实测脚本** | `tools/font_normalize_evidence.py`：把字体归一化的前后差异量化，下表数据就是它跑出来的 |
 | **开源合规文件** | `NOTICE.md` / `CHANGELOG.md` / `CONTRIBUTING.md` / `SECURITY.md` / `THIRD_PARTY_NOTICES.md` |
 
-### 🧪 实机截图（修复证据）
+### 🧪 修复效果实测（可复现）
 
-| 导出 Markdown：修复前 / 修复后 | 投标检查：21 项检查 + 逐项整改方案 |
-| :---: | :---: |
-| ![导出 Markdown 修复前后对比](assets/screenshots/智标2.0_导出Markdown修复_前后对比.png) | ![投标检查修复方案](assets/screenshots/智标2.0_投标检查_修复方案.png) |
+字体不统一是导出环节最典型的问题。下表**不是示意图，是跑代码量出来的**：
 
-> 左图：修复前 Word 正文里直接出现 `##`、`**` 等 Markdown 标记；右图：修复后按 Word 样式渲染，并可生成逐项整改方案。
+![导出 Word 字体归一化：根因与修复](assets/diagrams/zhibiao-font-normalize.png)
+
+| 观测项（`word/document.xml`，5 个 `w:rFonts`） | 修复前 | 修复后 |
+| --- | --- | --- |
+| 缺 `w:eastAsia` 的 `w:rFonts` | **5 / 5**（中文全部回退主题字体） | **0 / 5** |
+| 中文字体取值集合 | 空（由 Word 主题字体临时决定） | 宋体（正文）/ 黑体（标题） |
+| 西文字体取值集合 | 仿宋_GB2312 / 宋体（两条链路混用） | Times New Roman / 黑体 |
+| `docDefaults` 里的 `eastAsia` | 空 | 宋体 |
+| 主题引用（`asciiTheme` 等会覆盖显式字体的属性） | 存在 | 已清除 |
+
+复现方式（依赖见「快速开始」，输出去系统临时目录，也可自己指定）：
+
+```bash
+python tools/font_normalize_evidence.py            # 打印上表 + 结论
+python tools/font_normalize_evidence.py ./out       # 连同样例 docx 一起落到 ./out
+```
+
+> **为什么"修复后"偶发看着仍不统一？** 归一化只收敛成「正文一种 / 标题一种」，下面几类它管不到，属于已知边界：
+> 1. 图片、扫描件、截图里的文字不参与归一化；
+> 2. 容器内若没装中文字体，PDF 转档（LibreOffice / WeasyPrint）仍会被替换成 DejaVu —— 需要在镜像里装字体，或者直接交付 docx；
+> 3. 原文刻意使用的第三类字体（例如表格里的楷体）不会被强制收敛；
+> 4. 在缺少该字体的机器上用 Word / WPS 打开，本地仍可能替换字体。
 
 ---
 
@@ -82,17 +117,18 @@
 
 ## 📸 界面预览
 
-> 以下截图取自本仓库实际运行的系统，均为**浏览器端（B/S）**界面。
+> 以下 13 张截图全部取自本仓库实际运行的系统，均为**浏览器端（B/S）**界面。
+> （登录页截图已移除：画面内包含默认管理员账号提示，不适合放在公开仓库。）
 
 | 页面 | 截图 | 页面 | 截图 |
 | :---: | :---: | :---: | :---: |
-| **登录页** | ![登录页](assets/screenshots/01_登录页.png) | **工作台** | ![工作台](assets/screenshots/02_工作台.png) |
-| **招标解读** | ![招标解读](assets/screenshots/03_招标解读.png) | **投标生成 - 结构模板** | ![投标生成-结构模板](assets/screenshots/04_投标生成_结构模板.png) |
-| **投标生成 - 大纲编辑** | ![投标生成-大纲编辑](assets/screenshots/05_投标生成_大纲编辑.png) | **投标生成 - 正文生成** | ![投标生成-正文生成](assets/screenshots/06_投标生成_正文生成.png) |
-| **投标检查** | ![投标检查](assets/screenshots/07_投标检查.png) | **文档输出** | ![文档输出](assets/screenshots/08_文档输出.png) |
-| **资讯中心** | ![资讯中心](assets/screenshots/09_资讯中心.png) | **平台设置 - 智能体模型** | ![智能体模型](assets/screenshots/10_平台设置_智能体模型.png) |
-| **平台设置 - LLM 供应商** | ![LLM 供应商](assets/screenshots/11_平台设置_LLM供应商.png) | **平台设置 - MinerU OCR** | ![MinerU OCR](assets/screenshots/12_平台设置_MinerU_OCR.png) |
-| **平台设置 - 权限管理** | ![权限管理](assets/screenshots/13_平台设置_权限管理.png) | **平台设置 - Skill 管理** | ![Skill 管理](assets/screenshots/14_平台设置_Skill管理.png) |
+| **工作台** | ![工作台](assets/screenshots/02_工作台.png) | **招标解读** | ![招标解读](assets/screenshots/03_招标解读.png) |
+| **投标生成 - 结构模板** | ![投标生成-结构模板](assets/screenshots/04_投标生成_结构模板.png) | **投标生成 - 大纲编辑** | ![投标生成-大纲编辑](assets/screenshots/05_投标生成_大纲编辑.png) |
+| **投标生成 - 正文生成** | ![投标生成-正文生成](assets/screenshots/06_投标生成_正文生成.png) | **投标检查** | ![投标检查](assets/screenshots/07_投标检查.png) |
+| **文档输出** | ![文档输出](assets/screenshots/08_文档输出.png) | **资讯中心** | ![资讯中心](assets/screenshots/09_资讯中心.png) |
+| **平台设置 - 智能体模型** | ![智能体模型](assets/screenshots/10_平台设置_智能体模型.png) | **平台设置 - LLM 供应商** | ![LLM 供应商](assets/screenshots/11_平台设置_LLM供应商.png) |
+| **平台设置 - MinerU OCR** | ![MinerU OCR](assets/screenshots/12_平台设置_MinerU_OCR.png) | **平台设置 - 权限管理** | ![权限管理](assets/screenshots/13_平台设置_权限管理.png) |
+| **平台设置 - Skill 管理** | ![Skill 管理](assets/screenshots/14_平台设置_Skill管理.png) |  |  |
 
 ---
 
@@ -234,11 +270,11 @@
 
 ### 环境要求
 
-- **Python**: 3.12+
-- **Node.js**: 18+
-- **PostgreSQL**: 16+
-- **Redis**: 7+
-- **Docker & Docker Compose** (推荐)
+- **Python**: 3.12+（本仓库已在 **3.14.2** 上完成实机验证）
+- **Node.js**: 18+（验证时使用 24.12.0 / npm 11.6.2）
+- **PostgreSQL**: 16+（验证时使用便携版 PostgreSQL 16）
+- **Redis**: 7+（**只跑 API 可以不装**，仅 Celery 异步任务需要）
+- **Docker & Docker Compose**（方式一，推荐）
 
 ### 方式一：Docker 部署（推荐）
 
@@ -247,59 +283,91 @@
 git clone https://github.com/Foulereee/ZhiBiao.git
 cd ZhiBiao
 
-# 2. 配置环境变量
-cp .env.example .env
-# 编辑 .env 文件，填写 LLM API Key 等配置
+# 2. 配置环境变量（示例文件在 docker/ 下）
+cp docker/.env.docker.example docker/.env.docker
+# 编辑：填 LLM_API_KEY 等；UVICORN_WORKERS 保持 1（登录态在进程内，多进程会随机 401）
 
-# 3. 启动服务
-docker-compose up -d
-
-# 4. 构建前端（B/S：浏览器访问，不需要装桌面端）
-cd packages/desktop && npm install && npm run build   # 产物：packages/desktop/dist
-# 把 dist/ 交给 nginx 托管（/api 反代到 api:8000），或使用 deploy/ 中的站点还原脚本
+# 3. 启动全套（PostgreSQL / Redis / MinIO / api / celery / nginx 站点）
+docker compose --profile infra --profile web up -d --build
+# 不加 --profile 时只会启动 api + celery-worker + celery-beat（直连外部 PG/Redis/MinIO），
+# 详见 docker-compose.yml 顶部注释
 ```
 
-启动后自动运行：PostgreSQL (5432) / Redis (6379) / MinIO (9000) / FastAPI (8000) / Celery Worker
+启动后自动运行：PostgreSQL (5432) / Redis (16379→6379) / MinIO (19000，控制台 19001) / FastAPI (8000) / Celery Worker + Beat / nginx 站点
 
-- **B/S 网站入口**: `http://<主机IP>/`（nginx 站点，默认 80 端口）
+- **B/S 网站入口**: `http://<主机IP>:8080/`（`WEB_PORT` 可改为 80）
 - API 文档: http://localhost:8000/docs
-- MinIO 控制台: http://localhost:9001
+- 前端无需手工构建：`Dockerfile.web` 内已执行 `npm run build`，产物直接交给 nginx
 
 ### 方式二：本地开发
 
 ```bash
-# 后端
+# 1) 后端依赖
 python -m venv venv
-source venv/bin/activate   # Windows: venv\Scripts\activate
-pip install -e .
+venv\Scripts\activate            # Windows；Linux/macOS 用 source venv/bin/activate
+pip install -e .                 # 已在 Python 3.14.2 实测：218 个包安装成功
 
-# 前端
-cd packages/desktop
-npm install
+# 2) 前端依赖
+cd packages/desktop && npm install && cd ../..
 
-# 启动基础设施
-docker-compose up -d postgres redis minio
+# 3) 基础设施
+start-postgres.bat               # Windows：仓库自带便携 PostgreSQL 启停脚本（另有 stop-postgres.bat）
+# 其他平台或本机已有 Docker：
+docker compose -f docker/docker-compose.yml --profile infra up -d postgres redis minio
 
-# 配置环境变量
+# 4) 配置：.env 要放在**启动命令所在目录**（pydantic 的 env_file=".env" 是相对 CWD 的）
 cp .env.example .env
-# 编辑 .env，至少配置 BMP_LLM_API_KEY / BMP_DATABASE_URL / BMP_REDIS_URL
+# 至少改 BMP_DATABASE_URL；BMP_LLM_API_KEY 填你自己的；Redis 只有跑 Celery 时才必须
 
-# 初始化数据库
-alembic upgrade head
+# 5) 初始化数据库（二选一）
+psql -U postgres -d bidmaster -f db/init_pg.sql   # 建 11 张基础表
+# 其余表由应用启动时的 init_db() → Base.metadata.create_all 自动补齐（实测共 22 张）
+# ⚠️ 不要用 alembic upgrade head：alembic.ini 指向 db/migrations，而仓库里并没有这个目录
 
-# 启动后端
+# 6) 启动后端
 uvicorn services.main:app --reload --host 0.0.0.0 --port 8000
 
-# 启动 Celery Worker
-celery -A services.celery_app worker --loglevel=info
+# 7) 启动 Celery（需要 Redis；Windows 用 solo 池）
+celery -A services.celery_app worker --loglevel=info --pool=solo
 
-# 启动前端（B/S：浏览器访问 http://localhost:5173）
+# 8) 启动前端
 cd packages/desktop
-npm run dev
+npm run dev                      # ⚠️ 端口是 vite.config.ts 里写死的 15168，不是 5173
+#    浏览器打开 http://localhost:15168/ ；/api 默认反代到 http://localhost:8000
+#    后端不在 8000 时可用 VITE_API_TARGET=http://127.0.0.1:8010 覆盖
 
 # 如需桌面端外壳（可选，走同一套 API）
 npm run electron:dev
 ```
+
+### ✅ 本仓库的实机验证记录
+
+以下结果在 Windows 11 + Python 3.14.2 + Node 24.12.0 + 便携 PostgreSQL 16 上跑出来，
+**全部在一个全新目录 + 独立数据库**里完成，不接触生产环境：
+
+| 环节 | 结果 | 关键证据 |
+| --- | --- | --- |
+| 方式二 · 依赖安装 | ✅ | 全新 venv 执行 `pip install -e .` → `Successfully installed … zhibiao-1.0.0`（218 个包） |
+| 方式二 · 数据库 | ✅ | 独立库导入 `db/init_pg.sql` 建 11 张表；API 启动后 `create_all` 补齐到 **22 张** |
+| 方式二 · API 启动 | ✅ | `/api/health` 200（`db_ready:true`）、`/api/stats` 200（**46 个 Skill**）、`/openapi.json` 200 |
+| 方式二 · 登录与鉴权 | ✅ | 登录返回 64 位会话 token；带 token 访问 `/api/projects/`、`/api/skills/` 均 200；**不带 token 全部 401** |
+| 方式二 · 业务写入 | ✅ | 建项目 → 回读 → 删除，验证库恢复为空（写路径与事务正常） |
+| 方式二 · 初始化脚本 | ✅ | `deploy/seed_admin.py` 幂等执行：27 权限 / 4 角色 / 管理员账号 |
+| 方式二 · 前端构建 | ✅ | `npm run build`（tsc + vite）16.4s 通过，产物 `dist/index.html` + `index-*.js`（1.70 MB / gzip 525 KB） |
+| 方式二 · 前端 dev | ✅ | `npm run dev` 起在 **15168**，页面返回 `<title>智标</title>` |
+| 方式二 · Celery | ✅ | 本机用 fakeredis 提供 RESP 兼容服务：worker 连上 broker、Lua 锁脚本执行成功、打印 `celery@R ready.`，并注册 `run_batch_format` / `run_full_check` / `run_news_monitor` 三个任务（真 Redis 下同理，本次未跑任务消费） |
+| 字体归一化 | ✅ | `tools/font_normalize_evidence.py`：缺 `w:eastAsia` 的 run **5 → 0**（见上方实测表） |
+| 方式一 · Docker | ⚠️ 未实机 | 验证机没装 Docker，无法构建镜像；改做静态校验：`docker-compose.yml` 解析通过（9 个服务）、所有挂载源存在、两个 Dockerfile 步骤正常。**线上正是这套 compose 在跑**（`http://39.106.251.153/` → HTTP 200），可作为长期运行证据 |
+
+**已知边界（如实列出，不当作已完成）：**
+
+1. 登录会话存在**进程内字典**（`services/routers/auth.py` 的 `_sessions`），所以 `UVICORN_WORKERS` 必须为 1；
+   要横向扩容需先把会话迁到 Redis。
+2. `alembic.ini` 指向的 `db/migrations` 目录不存在，`alembic upgrade head` 必然失败（已在上面文档中避开）。
+3. 前端包体偏大：`renderer/src/assets/logo.png` 有 **2.51 MB** 且直接进 bundle，主 chunk 1.70 MB；
+   建议压缩 logo 并按路由拆包。
+4. `/api/projects` 这类以 `/` 结尾的路由会返回 307 跳转，客户端调用需带尾斜杠。
+5. `core/agent_engine/`（LangGraph）为预留能力，未接入运行路径；`langchain-core` 由依赖传递安装。
 
 ---
 
