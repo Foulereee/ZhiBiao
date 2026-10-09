@@ -8,10 +8,11 @@
 """
 from __future__ import annotations
 
+import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, asdict
 from typing import List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import requests
 import feedparser
 
@@ -38,6 +39,47 @@ class FetchError(Exception):
     pass
 
 
+def _app_name() -> str:
+    try:
+        from core.settings import get_settings
+
+        return get_settings().app_name
+    except Exception:  # pragma: no cover - 配置不可用时退回默认名
+        return "智标"
+
+
+def _user_agent() -> str:
+    """对外抓取时声明的 UA，跟随 .env 里的产品名。"""
+    return f"{_app_name()}/1.0 (Tender Monitor)"
+
+
+def _self_keywords() -> list[str]:
+    """「命中即视为自家项目」的排除关键字，例如资讯里提到本产品自己。"""
+    name = _app_name()
+    words = {name.lower()}
+    words |= {p for p in name.replace("_", "-").replace(" ", "-").lower().split("-") if len(p) >= 4}
+    words |= {name.replace(" ", "").lower(), name.replace(" ", "_").lower()}
+    return sorted(w for w in words if w)
+
+
+def _self_repos() -> list[str]:
+    """GitHub 抓取时排除自身的仓库名（由产品名推导）。"""
+    name = _app_name()
+    slug = name.strip().lower().replace(" ", "-")
+    return sorted({slug, slug.replace("-", "_"), name.strip()})
+
+
+def _utc_now_naive() -> datetime:
+    """naive UTC 当前时间(与 services.models.utcnow 同一口径)。
+
+    为什么不能用 datetime.now():feedparser 的 published_parsed 与 GitHub 的
+    "...Z" 时间都是 UTC,而 datetime.now() 返回服务器本地时间。两者直接相减
+    会在 UTC+8 下把时间窗口整体偏移 8 小时(窗口实际只剩 max_age_hours - 8),
+    导致窗口边缘的条目被错误筛掉。
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 class BaseFetcher(ABC):
     """抓取器基类"""
     @abstractmethod
@@ -58,26 +100,31 @@ class RSSFetcher(BaseFetcher):
         self.max_items = max_items
         self.fetch_detail = fetch_detail
 
+    def _fetch_feed_bytes(self, url: str) -> bytes:
+        """同步抓取 RSS 原始内容(阻塞 IO,由 asyncio.to_thread 执行)"""
+        resp = requests.get(
+            url,
+            timeout=15,
+            headers={"User-Agent": _user_agent()},
+        )
+        resp.raise_for_status()
+        return resp.content
+
     async def fetch(self, source_config: dict) -> List[NewsItem]:
         url = source_config.get("url", "")
         if not url:
             return []
 
         try:
-            resp = requests.get(
-                url,
-                timeout=15,
-                headers={"User-Agent": "BidMaster-Pro/1.0 (Tender Monitor)"},
-            )
-            resp.raise_for_status()
+            raw = await asyncio.to_thread(self._fetch_feed_bytes, url)
         except requests.exceptions.Timeout:
             raise FetchError(f"RSS 抓取超时: {url}")
         except requests.exceptions.RequestException as e:
             raise FetchError(f"RSS 抓取失败: {e}")
 
-        feed = feedparser.parse(resp.content)
+        feed = feedparser.parse(raw)
         items: List[NewsItem] = []
-        cutoff = datetime.now() - timedelta(hours=self.max_age_hours)
+        cutoff = _utc_now_naive() - timedelta(hours=self.max_age_hours)
 
         for entry in feed.entries[: self.max_items]:
             published = entry.get("published_parsed")
@@ -86,6 +133,7 @@ class RSSFetcher(BaseFetcher):
             else:
                 pub_time = datetime.now()
 
+            # published_parsed 是 UTC 结构时间,必须与 UTC 口径的 cutoff 比较
             if pub_time < cutoff:
                 continue
 
@@ -116,6 +164,16 @@ class RSSFetcher(BaseFetcher):
 
         return items
 
+    def _fetch_detail_html(self, url: str) -> str:
+        """同步抓取详情页 HTML(阻塞 IO,由 asyncio.to_thread 执行)"""
+        resp = requests.get(
+            url,
+            timeout=10,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
+        )
+        resp.raise_for_status()
+        return resp.text
+
     async def _fetch_detail_content(self, url: str, fallback: str) -> str:
         """抓取详情页正文(借鉴 NewsCrawlerSkill._extract_content)
 
@@ -123,13 +181,7 @@ class RSSFetcher(BaseFetcher):
         失败时回退到 RSS summary。
         """
         try:
-            resp = requests.get(
-                url,
-                timeout=10,
-                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
-            )
-            resp.raise_for_status()
-            html = resp.text
+            html = await asyncio.to_thread(self._fetch_detail_html, url)
         except Exception:
             return fallback
 
@@ -171,6 +223,17 @@ class APIFetcher(BaseFetcher):
             return await self._fetch_github_trending(source_config)
         return []
 
+    def _fetch_github_json(self, url: str, query: str, per_page: int) -> dict:
+        """同步调用 GitHub Search API(阻塞 IO,由 asyncio.to_thread 执行)"""
+        resp = requests.get(
+            url,
+            params={"q": query, "sort": "stars", "per_page": per_page},
+            timeout=30,
+            headers={"Accept": "application/vnd.github+json"},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     async def _fetch_github_trending(self, config: dict) -> List[NewsItem]:
         cfg = config.get("config") or config.get("extra_config") or {}
         languages = " ".join(
@@ -180,36 +243,35 @@ class APIFetcher(BaseFetcher):
         query = f"{languages} {topics} stars:>={cfg.get('min_stars', 5)}"
 
         try:
-            resp = requests.get(
+            data = await asyncio.to_thread(
+                self._fetch_github_json,
                 config.get("url", "https://api.github.com/search/repositories"),
-                params={"q": query, "sort": "stars", "per_page": cfg.get("max_results", 20)},
-                timeout=30,
-                headers={"Accept": "application/vnd.github+json"},
+                query,
+                cfg.get("max_results", 20),
             )
-            resp.raise_for_status()
         except Exception as e:
             raise FetchError(f"GitHub API 抓取失败: {e}")
 
-        data = resp.json()
         items: List[NewsItem] = []
-        cutoff = datetime.now() - timedelta(hours=168)
+        cutoff = _utc_now_naive() - timedelta(hours=168)
 
         # 排除自身仓库 (避免 GitHub 自我命中)
         # 读取 source_config 顶层 exclude_repos 或 cfg.exclude_repos
         exclude_repos = (
             config.get("exclude_repos")
             or cfg.get("exclude_repos")
-            or ["bidmaster-pro", "BidMaster-Pro", "bidmaster_pro"]  # 默认排除本项目
+            or _self_repos()  # 默认排除本项目
         )
         # 排除关键字 (title/url 中包含则过滤)
         exclude_keywords = (
             config.get("exclude_keywords")
             or cfg.get("exclude_keywords")
-            or ["bidmaster"]
+            or _self_keywords()
         )
 
         for repo in data.get("items", []):
             try:
+                # updated_at 形如 "...Z" 是 UTC 时间,与 UTC 口径的 cutoff 一致
                 updated = datetime.strptime(repo["updated_at"], "%Y-%m-%dT%H:%M:%SZ")
             except Exception:
                 updated = datetime.now()

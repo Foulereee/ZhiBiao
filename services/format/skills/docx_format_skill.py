@@ -340,8 +340,35 @@ class DocxFormatSkill(Skill):
         except Exception as e:
             return SkillResult(success=False, error=f"文件打开失败: {e}")
 
-        stats = {"paragraphs": 0, "headings": 0, "body": 0, "tables": 0, "margins_fixed": 0}
+        stats = {"paragraphs": 0, "headings": 0, "body": 0, "tables": 0, "margins_fixed": 0,
+                 "skipped_cover_toc": 0}
 
+        # 封面与目录不参与正文排版：
+        # 1) 封面块 = 文档开头（前 15 段内）出现分页符之前的所有段落。封面是
+        #    22pt 加粗居中的项目名称 + 36pt「投　标　文　件」，被正文规则
+        #    (12pt/两端对齐/首行缩进)套上去后就不像封面了（实测 36pt→12pt、
+        #    居中→两端对齐）。无封面（第一处分页符很靠后或没有）时不跳过任何段落。
+        # 2) 目录块 = 含 TOC / PAGEREF 域的段落，以及"目录"标题行，避免目录条目
+        #    被当成 h2/h3 改字号。
+        skip_elems = set()
+        _paras = doc.paragraphs
+        _first_break = None
+        for _i, _p in enumerate(_paras[:15]):
+            _x = _p._p.xml
+            if "w:br" in _x and 'type="page"' in _x:
+                _first_break = _i
+                break
+        if _first_break is not None:
+            for _p in _paras[: _first_break + 1]:
+                skip_elems.add(_p._p)
+        for _p in _paras:
+            _x = _p._p.xml
+            if "PAGEREF" in _x or " TOC " in _x:
+                skip_elems.add(_p._p)
+            elif re.sub(r"\s+", "", _p.text or "") in ("目录", "目次", "目錄"):
+                skip_elems.add(_p._p)
+
+        usable_width = None
         for section in doc.sections:
             section.top_margin = Cm(config["margin_top"])
             section.bottom_margin = Cm(config["margin_bottom"])
@@ -353,20 +380,43 @@ class DocxFormatSkill(Skill):
                 section.page_height = Cm(29.7)
             stats["margins_fixed"] += 1
 
+            # 版心宽度：本技能改过页边距后，目录的右对齐制表位要按新宽度重算
+            try:
+                usable_width = (
+                    section.page_width - section.left_margin - section.right_margin
+                )
+            except TypeError:
+                usable_width = None
+
             if config.get("page_number_align") == "居中":
                 footer = section.footer
                 p = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
-                p.clear()
-                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                self._create_page_number(p, config)
+                # 已有页码域的页脚（例如导出链路写入的「第 X 页」）只做居中，
+                # 不 clear() 重建：重建会把原页码样式换成「— X —」，等于把
+                # 导出时写好的页脚弄坏。
+                if "PAGE" in p._p.xml:
+                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    stats["footer_kept"] = stats.get("footer_kept", 0) + 1
+                else:
+                    p.clear()
+                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    self._create_page_number(p, config)
 
         for para in doc.paragraphs:
             text = para.text.strip()
             if not text:
                 continue
+            if para._p in skip_elems:
+                # 封面 / 目录段落原样保留（字体、字号、对齐、缩进都不动）
+                if "PAGEREF" in para._p.xml:
+                    # 唯一例外：本技能改了页边距，目录条目的右对齐制表位要跟着挪，
+                    # 否则页码点线不在版心右边界（实测差约 1.7cm）。
+                    self._realign_toc_tab(para, usable_width)
+                stats["skipped_cover_toc"] += 1
+                continue
             stats["paragraphs"] += 1
 
-            label = self._detect_heading_label(text)
+            label = self._detect_heading_label(text, para.style.name if para.style else None, config)
             rules = self._get_rules_for_label(label, config)
 
             self._apply_format_to_para(para, rules, config)
@@ -455,8 +505,19 @@ class DocxFormatSkill(Skill):
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
-    def _detect_heading_label(self, text: str) -> str:
-        heading_format = DEFAULT_FORMAT_CONFIG.get('heading_number_format', 'decimal')
+    def _detect_heading_label(self, text: str, style_name: str | None = None,
+                              config: dict | None = None) -> str:
+        # 1) 先认段落样式：导出的章节标题用的是 Heading 1/2/3（中文 Word 里叫"标题 1"），
+        #    这类标题往往不带阿拉伯编号（如"第一章 投标函"），只靠文本正则认不出来，
+        #    会被当正文压成 12pt（实测 3 个章节标题只认出 1 个）。
+        if style_name:
+            _m = re.match(r"(?i)^(?:heading|标题)\s*([1-9])\s*$", style_name.strip())
+            if _m:
+                return f"h{min(4, int(_m.group(1)))}"
+
+        # 2) 编号规则必须读调用方传入的模板配置：原来硬编码 DEFAULT_FORMAT_CONFIG，
+        #    导致自定义模板选"混合/带括号"等编号规则时不生效。
+        heading_format = (config or DEFAULT_FORMAT_CONFIG).get('heading_number_format', 'decimal')
         if heading_format == 'decimal':
             for i, regex in enumerate(RE_DECIMAL_HEADING_LIST):
                 if regex.match(text):
@@ -577,7 +638,19 @@ class DocxFormatSkill(Skill):
                     for attr in (qn('w:firstLine'), qn('w:hanging'), qn('w:hangingChars')):
                         ind.attrib.pop(attr, None)
             elif "font_size" in rules:
-                para.paragraph_format.first_line_indent = Pt(rules["font_size"] * rules["first_line_indent"] * 2)
+                # "首行缩进 N 字符"按字符数换算：中文 1 字符 ≈ 1 个字号宽，所以
+                # N 字符 = N × font_size(pt)。原来写成 Pt(font_size * N * 2)，
+                # 多乘了一个 2 —— 2 字符被写成 4 字符（实测排版后缩进 1.69cm，
+                # 正常应为 0.85cm）。同时写入 Word 原生的 firstLineChars，
+                # 让"段落-缩进-特殊格式=首行缩进 2 字符"在界面里显示正确。
+                chars = float(rules["first_line_indent"])
+                para.paragraph_format.first_line_indent = Pt(rules["font_size"] * chars)
+                pPr = para._p.get_or_add_pPr()
+                ind = pPr.find(qn('w:ind'))
+                if ind is None:
+                    ind = OxmlElement('w:ind')
+                    pPr.append(ind)
+                ind.set(qn("w:firstLineChars"), str(int(chars * 100)))
 
         if "space_before" in rules:
             para.paragraph_format.space_before = Pt(rules["space_before"])
@@ -588,7 +661,7 @@ class DocxFormatSkill(Skill):
             para.paragraph_format.line_spacing = Pt(rules["line_spacing"])
 
         if config.get("set_outline", False) and rules.get("alignment") == "left":
-            label = self._detect_heading_label(para.text.strip())
+            label = self._detect_heading_label(para.text.strip(), para.style.name if para.style else None, config)
             if label.startswith("h"):
                 level = int(label[1:])
                 pPr = para._p.get_or_add_pPr()
@@ -597,6 +670,24 @@ class DocxFormatSkill(Skill):
                     outlineLvl = OxmlElement('w:outlineLvl')
                     pPr.append(outlineLvl)
                 outlineLvl.set(qn('w:val'), str(level - 1))
+
+    def _realign_toc_tab(self, paragraph, usable_width):
+        """把目录条目的右对齐制表位挪到新的版心右边界。
+
+        目录条目原本按页边距 3.17cm 计算制表位（导出时写入），本技能把页边距
+        改成模板值（默认 2.5cm）后，点线页码就会偏左约 1.7cm。这里按改后的
+        版心宽重算，只动制表位，不动目录条目的字体与字号。
+        """
+        if usable_width is None:
+            return
+        from docx.enum.text import WD_TAB_ALIGNMENT, WD_TAB_LEADER
+        from docx.shared import Cm
+
+        pf = paragraph.paragraph_format
+        pf.tab_stops.clear_all()
+        pf.tab_stops.add_tab_stop(
+            usable_width - Cm(0.4), WD_TAB_ALIGNMENT.RIGHT, WD_TAB_LEADER.DOTS
+        )
 
     def _create_page_number(self, paragraph, config: dict):
         from docx.shared import Pt
@@ -622,9 +713,15 @@ class DocxFormatSkill(Skill):
         instrText = OxmlElement('w:instrText')
         instrText.set(qn('xml:space'), 'preserve')
         instrText.text = 'PAGE'
+        # 补 separate + 缓存值：原先只有 begin/end，域结果为空，打开文档
+        # 在未更新域前页脚显示成"—  —"（实测）。给个占位值即可正常显示。
+        fldCharSep = OxmlElement('w:fldChar')
+        fldCharSep.set(qn('w:fldCharType'), 'separate')
+        cached = OxmlElement('w:t')
+        cached.text = '1'
         fldChar2 = OxmlElement('w:fldChar')
         fldChar2.set(qn('w:fldCharType'), 'end')
-        run_field._r.extend([fldChar1, instrText, fldChar2])
+        run_field._r.extend([fldChar1, instrText, fldCharSep, cached, fldChar2])
 
         run_suffix = paragraph.add_run(' —')
         run_suffix.font.size = Pt(font_size)

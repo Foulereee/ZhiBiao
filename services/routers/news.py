@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_
 
 from services.database import get_db
-from services.models import MonitoringTask, CrawlResult, NewsSourceRegistry, HotspotItem, Project, User
+from services.models import MonitoringTask, CrawlResult, NewsSourceRegistry, HotspotItem, Project, User, iso_utc
 from services.llm_factory import get_llm_gateway
 from core.skill_engine.base import SkillContext
 from services.middleware.rbac_middleware import get_current_user_optional
@@ -45,7 +45,7 @@ async def list_monitor_tasks(db: AsyncSession = Depends(get_db)):
             "sites": t.sites,
             "interval_minutes": t.interval_minutes,
             "enabled": t.enabled,
-            "last_run_at": t.last_run_at.isoformat() if t.last_run_at else None,
+            "last_run_at": iso_utc(t.last_run_at),
         }
         for t in tasks
     ]}
@@ -346,7 +346,7 @@ async def list_task_results(task_id: str, db: AsyncSession = Depends(get_db)):
                 "category": r.category,
                 "is_hot": r.is_hot,
                 "hot_score": r.hot_score,
-                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "created_at": iso_utc(r.created_at),
             }
             for r in items
         ],
@@ -406,7 +406,7 @@ async def get_today_hot(
             "industry_code": "",
             "industry_name": "",
             "industry_icon": "",
-            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "created_at": iso_utc(r.created_at),
         })
 
     # === B. 聚合热点 (复用 AI媒体/通用资讯源) ===
@@ -443,7 +443,7 @@ async def get_today_hot(
                 "industry_code": h.industry_code,
                 "industry_name": get_industry_name(h.industry_code),
                 "industry_icon": get_industry_icon(h.industry_code[:2]),
-                "created_at": h.created_at.isoformat() if h.created_at else None,
+                "created_at": iso_utc(h.created_at),
             })
 
     # === C. 混合排序 (hot_score 降序) ===
@@ -561,7 +561,7 @@ async def list_sources(
                 "weight": r.weight,
                 "enabled": r.enabled,
                 "description": r.description,
-                "last_crawled_at": r.last_crawled_at.isoformat() if r.last_crawled_at else None,
+                "last_crawled_at": iso_utc(r.last_crawled_at),
                 "last_status": r.last_status,
             }
             for r in rows
@@ -757,7 +757,7 @@ async def list_hotspots(
                 "is_hot": r.is_hot,
                 "is_converted": r.is_converted,
                 "converted_project_id": r.converted_project_id,
-                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "created_at": iso_utc(r.created_at),
             }
             for r in rows
         ],
@@ -829,7 +829,7 @@ async def get_hotspot_detail(
         "is_converted": row.is_converted,
         "converted_project_id": row.converted_project_id,
         "converted_project": project_info,
-        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "created_at": iso_utc(row.created_at),
     }
 
 
@@ -876,6 +876,96 @@ class ConvertToBidRequest(BaseModel):
     project_name: str | None = None
     # 兼容旧字段,实际由 current_user 或系统兜底用户决定
     user_id: str | None = None
+    # 是否自动抓取资讯正文并落成项目的"招标文件"(默认开启)
+    fetch_content: bool = True
+
+
+def _extract_article_text(url: str) -> str:
+    """同步抓取资讯详情页正文(用 bs4 抽取,失败返回空串)。
+
+    该函数内部是阻塞 IO,调用方必须用 asyncio.to_thread 包一层。
+    """
+    import re
+
+    import requests
+    from bs4 import BeautifulSoup
+
+    resp = requests.get(
+        url,
+        timeout=15,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+            )
+        },
+    )
+    resp.raise_for_status()
+    if not resp.encoding or resp.encoding.lower() == "iso-8859-1":
+        resp.encoding = resp.apparent_encoding or "utf-8"
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+    for tag in soup(["script", "style", "noscript", "nav", "footer", "header", "form", "iframe"]):
+        tag.decompose()
+
+    body = (
+        soup.find("article")
+        or soup.find(id="content")
+        or soup.find(id="newscontent")
+        or soup.find(class_="article-content")
+        or soup.find(class_="content")
+        or soup.body
+    )
+    if body is None:
+        return ""
+
+    text = body.get_text("\n", strip=True)
+    text = re.sub(r"[ \t\xa0]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+async def _ingest_text_as_tender(db: AsyncSession, project: Project, url: str, text: str):
+    """把抓到的资讯正文落成项目目录下的 .txt,登记为 tender 文档并直接写入解析结果。
+
+    这样「招标解读」步骤就有输入了,不会再卡在"请上传招标文件"。
+    """
+    import re
+    from pathlib import Path as _Path
+
+    from services.models import Document, ProjectStatus
+
+    safe_title = re.sub(r"[^\w\u4e00-\u9fff.-]+", "_", (project.name or "source"))[:60].strip("_")
+    upload_dir = _Path(f"./projects/{project.id}")
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    file_path = upload_dir / f"{safe_title or 'source'}.txt"
+
+    header = (
+        f"# 来源资讯原文\n"
+        f"# URL: {url}\n"
+        f"# 抓取时间: {datetime.now().isoformat(timespec='seconds')}\n\n"
+    )
+    content = header + text
+    file_path.write_text(content, encoding="utf-8")
+
+    doc = Document(
+        project_id=project.id,
+        type="tender",
+        file_path=str(file_path),
+        original_name=file_path.name,
+        file_size=len(content.encode("utf-8")),
+        parsed_content=text,
+        doc_metadata={"source_url": url, "ingested_from": "news_hotspot"},
+    )
+    db.add(doc)
+    await db.flush()
+
+    if not project.tender_doc_id:
+        project.tender_doc_id = doc.id
+    if project.status == ProjectStatus.CREATED.value:
+        project.status = ProjectStatus.INTERPRETING.value
+    await db.flush()
+    return doc
 
 
 async def _resolve_user_id(
@@ -951,9 +1041,15 @@ async def convert_hotspot_to_bid(
     if not row:
         raise HTTPException(status_code=404, detail="热点不存在")
     if row.is_converted and row.converted_project_id:
+        existed = (await db.execute(
+            select(Project).where(Project.id == row.converted_project_id)
+        )).scalar_one_or_none()
         return {
             "success": True,
             "project_id": row.converted_project_id,
+            "project_name": existed.name if existed else None,
+            "document_id": str(existed.tender_doc_id) if existed and existed.tender_doc_id else None,
+            "has_document": bool(existed and existed.tender_doc_id),
             "message": "该商机已转换为项目,直接返回原项目",
         }
 
@@ -979,14 +1075,48 @@ async def convert_hotspot_to_bid(
     db.add(project)
     await db.flush()
 
+    # ── 自动抓取资讯正文,落成该项目的"招标文件" ──
+    # 原先只建项目壳,后续「招标解读」缺少输入,用户会卡在上传文件这一步。
+    document_id = None
+    text_length = 0
+    ingest_error = None
+    if req.fetch_content and row.url:
+        try:
+            text = await asyncio.to_thread(_extract_article_text, row.url)
+            if text and len(text) >= 200:
+                doc = await _ingest_text_as_tender(db, project, row.url, text)
+                document_id = str(doc.id)
+                text_length = len(text)
+            else:
+                ingest_error = "未能从资讯页抓取到足够的正文(可能需登录或是动态渲染页面)"
+        except Exception as e:
+            ingest_error = f"抓取资讯正文失败: {e}"
+            logger.warning("[convert-to-bid] hotspot=%s 抓取正文失败: %s", hotspot_id, e)
+
     row.is_converted = True
     row.converted_project_id = str(project.id)
     await db.commit()
+
+    warning = None
+    if not (row.amount or row.bid_deadline or row.project_code):
+        warning = (
+            "该资讯未包含招标金额/截止时间/项目编号,可能不是正式招标公告;"
+            "建议核实后上传正式招标文件再解读。"
+        )
 
     return {
         "success": True,
         "project_id": str(project.id),
         "project_name": name,
         "user_id": user_id,
-        "message": "商机已转换为投标项目,可在项目管理中继续生成标书",
+        "document_id": document_id,
+        "has_document": document_id is not None,
+        "text_length": text_length,
+        "ingest_error": ingest_error,
+        "warning": warning,
+        "message": (
+            "商机已转为投标项目,并已自动抓取资讯正文作为招标文件,可直接进入招标解读"
+            if document_id
+            else "商机已转为投标项目,但未能自动抓取正文,请在招标解读中上传招标文件"
+        ),
     }

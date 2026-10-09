@@ -23,6 +23,11 @@ EXTRACT_PATTERNS = [
     r'<body[^>]*>(.*?)</body>',
 ]
 
+RE_ANCHOR = re.compile(r'<a\b([^>]*)>(.*?)</a>', re.DOTALL | re.IGNORECASE)
+RE_HREF = re.compile(r'href=["\']([^"\']+)["\']', re.IGNORECASE)
+RE_REL_NEXT = re.compile(r'rel=["\']?[^"\'>]*\bnext\b', re.IGNORECASE)
+RE_NEXT_TEXT = re.compile(r'下一页|下页|next', re.IGNORECASE)
+
 RE_HTML_TAG = re.compile(r'<[^>]+>')
 RE_HTML_ENTITY = re.compile(r'&[a-zA-Z]+;')
 RE_WHITESPACE = re.compile(r'\s+')
@@ -71,6 +76,12 @@ class NewsCrawlerSkill(Skill):
 
         filtered = self._filter_results(results, keywords, exclude_keywords, must_contain)
 
+        # 小结日志: 站点数 / 累计条数 / 过滤后条数 (逐站点"实际页数"见 _crawl_site)
+        logger.info(
+            f"资讯爬虫小结: 任务={task_id or '-'} 站点数={len(sites[:5])} "
+            f"失败站点={len(errors)} 累计条数={len(results)} 过滤后={len(filtered)}"
+        )
+
         return SkillResult(
             success=True,
             data={
@@ -78,7 +89,7 @@ class NewsCrawlerSkill(Skill):
                 "after_filter": len(filtered),
                 "results": filtered[:50],
                 "errors": errors,
-                "crawled_at": datetime.now().isoformat(),
+                "crawled_at": datetime.now().astimezone().isoformat(),
             },
         )
 
@@ -87,35 +98,93 @@ class NewsCrawlerSkill(Skill):
     ) -> list[dict[str, Any]]:
         import httpx
 
-        results = []
+        try:
+            max_pages = max(1, int(max_pages))
+        except (TypeError, ValueError):
+            max_pages = 1
+
+        results: list[dict[str, Any]] = []
+        pages_crawled = 0
         try:
             async with httpx.AsyncClient(
                 timeout=30, follow_redirects=True, headers={
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                 }
             ) as client:
-                resp = await client.get(url)
-                resp.raise_for_status()
-                html = resp.text
+                # 逐页抓取: 只跟随页面自身的"下一页"链接(不臆造页码参数),
+                # max_pages<=1 时只抓第一页,与旧行为完全一致。
+                current_url: str | None = url
+                visited: set[str] = set()
+                while current_url and pages_crawled < max_pages:
+                    if current_url in visited:
+                        break  # URL 去重: 已抓过的列表页不再抓(防"下一页"指回自己)
+                    visited.add(current_url)
+                    page_url = current_url
 
-                items = self._parse_list_page(html, url)
-                for item in items:
                     try:
-                        detail_resp = await client.get(item["url"])
-                        detail_resp.raise_for_status()
-                        content = self._extract_content(detail_resp.text)
-                        item["content"] = content
-                        item["content_hash"] = hashlib.md5(content.encode()).hexdigest()
-                    except Exception:
-                        item["content"] = ""
-                        item["content_hash"] = ""
+                        resp = await client.get(page_url)
+                        resp.raise_for_status()
+                    except Exception as e:
+                        logger.warning(f"列表页请求失败 {page_url}: {e}")
+                        break  # 该站点某一页失败即停止翻页(不影响其他站点)
 
-                    results.append(item)
+                    pages_crawled += 1
+                    html = resp.text
+
+                    for item in self._parse_list_page(html, page_url):
+                        try:
+                            detail_resp = await client.get(item["url"])
+                            detail_resp.raise_for_status()
+                            content = self._extract_content(detail_resp.text)
+                            item["content"] = content
+                            item["content_hash"] = hashlib.md5(content.encode()).hexdigest()
+                        except Exception:
+                            item["content"] = ""
+                            item["content_hash"] = ""
+
+                        results.append(item)
+
+                    # 提前结束条件: 页面里找不到"下一页"链接就不再翻页
+                    current_url = self._find_next_page_url(html, page_url)
 
         except Exception as e:
             logger.warning(f"HTTP请求失败 {url}: {e}")
 
+        logger.info(
+            f"资讯爬虫站点小结: 站点={url} 实际页数={pages_crawled}/{max_pages} 累计条数={len(results)}"
+        )
         return results
+
+    def _find_next_page_url(self, html: str, base_url: str) -> str | None:
+        """从列表页 HTML 里找"下一页"链接(只看页面自身声明,不臆造 URL 参数)。
+
+        - 优先 <a rel="next" href="...">
+        - 其次链接文字为 下一页/下页/Next 的链接(限制文字长度,避免把标题里
+          含 "next" 的普通文章链接误判为翻页链接)
+        - href 用 urljoin 转成绝对地址;找不到返回 None(表示停止翻页)
+        """
+        from urllib.parse import urljoin
+
+        text_fallback: str | None = None
+        for attrs, inner in RE_ANCHOR.findall(html):
+            href_match = RE_HREF.search(attrs)
+            if not href_match:
+                continue
+            href = href_match.group(1).strip()
+            if not href or href.startswith(("#", "javascript:", "mailto:")):
+                continue
+            next_url = urljoin(base_url, href)
+
+            if RE_REL_NEXT.search(attrs):
+                return next_url
+
+            if text_fallback is None:
+                text = RE_HTML_TAG.sub('', inner)
+                text = self._decode_entities(text).strip()
+                if text and len(text) <= 20 and RE_NEXT_TEXT.search(text):
+                    text_fallback = next_url
+
+        return text_fallback
 
     def _parse_list_page(self, html: str, base_url: str) -> list[dict[str, Any]]:
         items = []

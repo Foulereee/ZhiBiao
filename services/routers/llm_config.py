@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from services.database import get_db
-from services.models import AgentConfig, LLMProviderConfig
+from services.models import AgentConfig, LLMProviderConfig, iso_utc
 from services.llm_factory import get_llm_gateway
 from services.middleware.rbac_middleware import get_current_user, require_permission
 from services.models import User
@@ -170,7 +170,12 @@ async def reset_agent_models(db: AsyncSession = Depends(get_db)):
 @router.get("/providers")
 async def list_providers():
     return {"providers": [
-        {"id": "deepseek", "name": "DeepSeek", "models": ["deepseek-chat", "deepseek-reasoner"]},
+        {"id": "deepseek", "name": "DeepSeek", "models": [
+            "deepseek-chat", "deepseek-reasoner",
+            # 本服务器现用的 DeepSeek key 只支持下面两个模型名
+            # (写 deepseek-v4.1-flash 会返回 400: 仅支持 deepseek-flash / deepseek-v4-pro)
+            "deepseek-flash", "deepseek-v4-pro",
+        ]},
         {"id": "zhipu", "name": "智谱AI", "models": ["glm-4-plus", "glm-4-flash"]},
         {"id": "qianfan", "name": "百度千帆", "models": ["ernie-4.0", "ernie-3.5"]},
         {"id": "dashscope", "name": "阿里百炼", "models": ["qwen-max", "qwen-plus", "qwen-turbo"]},
@@ -211,6 +216,8 @@ async def get_default_model(db: AsyncSession = Depends(get_db)):
     """读取已保存的默认 LLM 配置：优先数据库表 llm_provider_configs（is_default=True），其次环境变量。"""
     import os
 
+    from services.llm_factory import get_llm_config_source
+
     result = await db.execute(
         select(LLMProviderConfig).where(LLMProviderConfig.is_default == True, LLMProviderConfig.enabled == True)
     )
@@ -238,6 +245,8 @@ async def get_default_model(db: AsyncSession = Depends(get_db)):
             "api_key": api_key_masked,
             "has_api_key": bool(db_default.api_key),
             "source": "db",
+            "effective_source": get_llm_config_source(),
+            "effective_note": "平台设置已生效（数据库优先于 .env）",
             "config_id": db_default.id,
             "display_name": db_default.display_name or "",
         }
@@ -315,6 +324,12 @@ async def get_default_model(db: AsyncSession = Depends(get_db)):
         "api_key": api_key_masked,
         "has_api_key": bool(env_api_key),
         "source": "env",
+        "effective_source": get_llm_config_source(),
+        "effective_note": (
+            "当前实际生效的是 .env（数据库里没有启用的默认配置）"
+            if get_llm_config_source() == "env"
+            else "数据库配置已生效"
+        ),
     }
 
 
@@ -347,8 +362,8 @@ async def list_llm_configs(db: AsyncSession = Depends(get_db)):
                 "is_default": bool(r.is_default),
                 "enabled": bool(r.enabled),
                 "note": r.note or "",
-                "created_at": r.created_at.isoformat() if r.created_at else None,
-                "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+                "created_at": iso_utc(r.created_at),
+                "updated_at": iso_utc(r.updated_at),
             }
             for r in rows
         ],
@@ -375,6 +390,23 @@ class LLMConfigCreate(BaseModel):
     note: str | None = None
 
 
+async def _apply_llm_config_change() -> None:
+    """配置改动后立刻生效:重新读库 + 丢弃缓存网关。
+
+    必须先 commit 再刷新,否则另一个会话可能还读不到新值;
+    另一个 uvicorn worker 最迟在 BMP_LLM_CONFIG_TTL(默认 15 秒)后跟上。
+    """
+    import logging
+
+    from services.llm_factory import refresh_llm_config, reset_llm_gateway
+
+    try:
+        await refresh_llm_config()
+    except Exception as exc:
+        logging.getLogger("llm").warning(f"刷新 LLM 配置缓存失败: {exc}")
+    reset_llm_gateway()
+
+
 @router.post("/configs")
 async def create_llm_config(payload: LLMConfigCreate, db: AsyncSession = Depends(get_db)):
     import re
@@ -398,6 +430,8 @@ async def create_llm_config(payload: LLMConfigCreate, db: AsyncSession = Depends
         cfg.is_default = True
     db.add(cfg)
     await db.flush()
+    await db.commit()
+    await _apply_llm_config_change()
     return {"success": True, "id": cfg.id}
 
 
@@ -431,6 +465,8 @@ async def update_llm_config(config_id: str, payload: LLMConfigUpdate, db: AsyncS
     if payload.note is not None:
         cfg.note = payload.note
     await db.flush()
+    await db.commit()
+    await _apply_llm_config_change()
     return {"success": True}
 
 
@@ -449,6 +485,8 @@ async def delete_llm_config(config_id: str, db: AsyncSession = Depends(get_db)):
         if first:
             first.is_default = True
             await db.flush()
+    await db.commit()
+    await _apply_llm_config_change()
     return {"success": True}
 
 
@@ -461,6 +499,8 @@ async def set_default_config(config_id: str, db: AsyncSession = Depends(get_db))
         raise HTTPException(status_code=404, detail="配置不存在")
     cfg.is_default = True
     await db.flush()
+    await db.commit()
+    await _apply_llm_config_change()
     return {"success": True}
 
 
@@ -504,50 +544,34 @@ async def set_default_model(config: dict, db: AsyncSession = Depends(get_db)):
             return {"success": False, "error": "API Base URL 解析失败"}
 
     import os
-    env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env")
+    from core.env_store import env_path as _app_env_path, update_env_keys
+
+    env_path = _app_env_path()
     env_real = os.path.realpath(env_path)
     project_root = os.path.realpath(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
     if not env_real.startswith(project_root + os.sep) and env_real != project_root:
         return {"success": False, "error": "非法的 .env 路径"}
 
-    lines = []
-    if os.path.exists(env_path):
-        with open(env_path, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-
-    env_map = {}
-    for line in lines:
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, _, v = line.partition("=")
-            k = k.strip()
-            if re.match(r"^[A-Z][A-Z0-9_]{1,63}$", k):
-                env_map[k] = v.strip()
-
-    def _escape_env_value(v: str) -> str:
-        if any(c in v for c in ['\n', '\r', '"', "'", '$', '`', '\\']):
-            return '"' + v.replace('\\', '\\\\').replace('"', '\\"') + '"'
-        return v
-
-    env_map["BMP_LLM_DEFAULT_MODEL"] = model
+    updates = {"BMP_LLM_DEFAULT_MODEL": model}
     if api_key:
-        env_map["BMP_LLM_API_KEY"] = api_key
+        updates["BMP_LLM_API_KEY"] = api_key
     if api_base:
-        env_map["BMP_LLM_API_BASE"] = api_base
+        updates["BMP_LLM_API_BASE"] = api_base
 
-    tmp_path = env_path + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        f.write(f"# BidMaster Pro - LLM Configuration\n")
-        f.write(f"# Last updated by set_default_model\n")
-        for k, v in env_map.items():
-            f.write(f"{k}={_escape_env_value(v)}\n")
-    os.replace(tmp_path, env_path)
+    # 只改这几个键，保留 .env 里原有的注释与分组。
+    # 以前是「解析成 dict 再整文件重写」：现在容器把宿主机的 .env bind mount 了
+    # 进来，整文件重写会毁掉宿主机 .env 的全部注释；而且 os.replace() 对绑定
+    # 挂载进来的单文件会跨设备失败（EXDEV）。
     try:
-        os.chmod(env_path, 0o600)
-    except Exception:
-        pass
+        update_env_keys(updates, path=env_path)
+    except OSError as e:
+        return {"success": False, "error": f"写入 .env 失败: {e}"}
 
+    from core.settings import reload_settings
     from services.llm_factory import reset_llm_gateway
+
+    # .env 被重写了,但 get_settings() 缓存在模块级变量里,必须重载才生效
+    reload_settings()
     reset_llm_gateway()
 
     return {"success": True, "model": model}

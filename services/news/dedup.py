@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict
 
 
@@ -70,19 +70,30 @@ class NewsDeduplicator:
 
     @classmethod
     def filter_by_time(cls, items: List[dict], max_age_hours: int = 168) -> List[dict]:
-        """时间窗过滤 (默认 7 天)"""
-        cutoff = datetime.now() - timedelta(hours=max_age_hours)
+        """时间窗过滤 (默认 7 天)
+
+        口径与 services/news/fetchers.py 一致:pub_date 按 UTC 解析(内容来自
+        RSS/GitHub,均为 UTC),cutoff 也用 naive UTC。旧实现用 datetime.now()
+        (本地时间)算 cutoff,在 UTC+8 下窗口整体偏移 8 小时。
+        """
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=max_age_hours)
         filtered: List[dict] = []
         for item in items:
             pub_date_str = item.get("pub_date", "")
+            if not isinstance(pub_date_str, str) or not pub_date_str:
+                # 无发布日期: 保持原有宽松行为(放行)
+                filtered.append(item)
+                continue
             try:
-                if isinstance(pub_date_str, str) and pub_date_str:
-                    pub_date = datetime.fromisoformat(pub_date_str.replace("Z", "+00:00"))
-                else:
-                    filtered.append(item)
-                    continue
-                if pub_date >= cutoff:
-                    filtered.append(item)
-            except Exception:
+                pub_date = datetime.fromisoformat(pub_date_str.replace("Z", "+00:00"))
+            except ValueError:
+                # 日期串本身无法解析: 与"无发布日期"同等处理,放行(不因解析失败丢弃)
+                filtered.append(item)
+                continue
+            if pub_date.tzinfo is not None:
+                # 带时区(例如 "+00:00"/"Z")的先归一到 naive UTC 再比较,避免
+                # aware/naive 相减抛 TypeError 或被 except 吞掉导致筛选失效。
+                pub_date = pub_date.astimezone(timezone.utc).replace(tzinfo=None)
+            if pub_date >= cutoff:
                 filtered.append(item)
         return filtered

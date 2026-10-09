@@ -241,6 +241,9 @@ export default function FormatPage() {
 
   const [outputFormat, setOutputFormat] = useState<OutputFormat>('docx');
   const [exporting, setExporting] = useState<OutputFormat | null>(null);
+  // 一键生成目录：仅对 docx/doc 有意义（pdf 由 LibreOffice 转换，不支持插入目录域）
+  const [tocEnabled, setTocEnabled] = useState<boolean>(true);
+  const [tocLevels, setTocLevels] = useState<number>(3);
   const navigate = useNavigate();
 
   const goToGenerate = useCallback(() => {
@@ -431,8 +434,39 @@ export default function FormatPage() {
   };
 
   const handleExport = async (target: OutputFormat) => {
+    // 项目源：走 /generate/{id}/export-docx（该接口支持 toc / toc_levels，能真正插入目录）
+    if (sourceMode === 'project' && selectedProjectId) {
+      setExporting(target);
+      setExportError('');
+      try {
+        const useToc = tocEnabled && target !== 'pdf';
+        const res = await generateApi.exportDocx(selectedProjectId, {
+          fmt: target,
+          applyFormat: true,
+          toc: useToc,
+          tocLevels: tocLevels,
+        });
+        const data = res.data as unknown;
+        if (data == null) {
+          throw new Error('后端未返回文件内容（可能是错误响应）');
+        }
+        const mimeMap: Record<OutputFormat, string> = {
+          docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          doc: 'application/msword',
+          pdf: 'application/pdf',
+        };
+        const blob = data instanceof Blob ? data : new Blob([data as BlobPart], { type: mimeMap[target] });
+        const projName = projects.find(p => p.id === selectedProjectId)?.name || 'document';
+        downloadBlob(blob, `${projName}.${target}`);
+      } catch (e: unknown) {
+        setExportError(e instanceof Error ? e.message : `${target} 导出失败`);
+      } finally {
+        setExporting(null);
+      }
+      return;
+    }
     if (!file) {
-      setExportError('请先上传文件');
+      setExportError(sourceMode === 'project' ? '请先选择要导出的项目' : '请先上传文件');
       return;
     }
     setExporting(target);
@@ -1251,17 +1285,54 @@ export default function FormatPage() {
               );
             })}
           </div>
+          {outputFormat === 'pdf' ? (
+            <div style={{ marginBottom: '8px', padding: '6px 10px', background: '#f8fafc', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '11px', color: 'var(--color-text-secondary)' }}>
+              一键生成目录仅支持 DOCX / DOC 导出，PDF 不支持插入目录，已自动跳过。
+            </div>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '8px', padding: '8px 10px', background: '#f8fafc', border: '1px solid var(--color-border)', borderRadius: '6px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--color-text)', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={tocEnabled}
+                  onChange={(e) => setTocEnabled(e.target.checked)}
+                  style={{ cursor: 'pointer' }}
+                />
+                一键生成目录
+              </label>
+              <label htmlFor="toc-levels-select" style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+                目录级别
+                <select
+                  id="toc-levels-select"
+                  value={tocLevels}
+                  disabled={!tocEnabled}
+                  onChange={(e) => setTocLevels(Number(e.target.value))}
+                  style={{ padding: '4px 8px', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '12px', background: tocEnabled ? 'white' : '#f1f5f9', cursor: tocEnabled ? 'pointer' : 'not-allowed' }}
+                >
+                  <option value={1}>1 级（仅章）</option>
+                  <option value={2}>2 级（章 + 节）</option>
+                  <option value={3}>3 级（到小节，推荐）</option>
+                  <option value={4}>4 级（最细）</option>
+                </select>
+              </label>
+              <span style={{ fontSize: '11px', color: 'var(--color-text-secondary)', flex: 1, minWidth: '180px' }}>
+                {tocEnabled
+                  ? `导出内容会自带目录（列到 ${tocLevels} 级标题），在 Word/WPS 里按 F9 可刷新出页码`
+                  : '勾选后导出的 docx / doc / PDF 会在正文前自动插入目录'}
+              </span>
+            </div>
+          )}
           <button
             onClick={() => handleExport(outputFormat)}
-            disabled={!lastOutputPath || exporting !== null}
+            disabled={(!lastOutputPath && !(sourceMode === 'project' && selectedProjectId)) || exporting !== null}
             style={{
               width: '100%',
               padding: '8px',
-              background: !lastOutputPath || exporting !== null ? '#94a3b8' : '#0f766e',
+              background: (!lastOutputPath && !(sourceMode === 'project' && selectedProjectId)) || exporting !== null ? '#94a3b8' : '#0f766e',
               color: 'white',
               border: 'none',
               borderRadius: '6px',
-              cursor: !lastOutputPath || exporting !== null ? 'not-allowed' : 'pointer',
+              cursor: (!lastOutputPath && !(sourceMode === 'project' && selectedProjectId)) || exporting !== null ? 'not-allowed' : 'pointer',
               fontSize: '13px',
               fontWeight: 500,
               display: 'flex',

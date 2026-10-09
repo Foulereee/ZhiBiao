@@ -22,7 +22,9 @@ from services.database import get_db
 from services.llm_factory import get_llm_gateway
 
 
-router = APIRouter(prefix="/agent", tags=["agent"])
+from services.middleware.api_key import require_any_auth
+
+router = APIRouter(prefix="/agent", tags=["agent"], dependencies=[Depends(require_any_auth)])
 
 
 class RunPipelineRequest(BaseModel):
@@ -55,6 +57,8 @@ def _setup_tool_registry(ctx: AgentContext):
     registry = ToolRegistry()
     register_all_tools(registry)
     ctx.tool_registry = registry
+    # 按 agent 名隔离绑定上下文（其余 Agent 在 AgentRegistry.create_instance 中绑定）
+    registry.bind_agent_context(ctx.agent_name, ctx)
 
 
 @router.post("/run")

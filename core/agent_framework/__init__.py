@@ -1,4 +1,4 @@
-"""BidMaster 多Agent框架核心模块。
+"""智标 多Agent框架核心模块。
 
 提供多Agent系统的核心组件：
 - Agent 基类与ReAct循环

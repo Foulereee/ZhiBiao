@@ -12,7 +12,9 @@ except ImportError:
     FastMCP = None
 
 if FastMCP is not None:
-    mcp = FastMCP("BidMaster Pro MCP Server")
+    from core.settings import get_settings as _get_settings
+
+    mcp = FastMCP(f"{_get_settings().app_name} MCP Server")
 else:
     class _MCPStub:
         def tool(self, *args, **kwargs):
@@ -32,7 +34,7 @@ else:
 async def interpret_tender(project_id: str) -> str:
     from services.database import async_session
     from services.routers.interpret import interpret_tender as _interpret
-    async with async_session() as db:
+    async with async_session()() as db:
         result = await _interpret(project_id, db)
     return json.dumps(result, ensure_ascii=False)
 
@@ -41,7 +43,7 @@ async def interpret_tender(project_id: str) -> str:
 async def generate_outline(project_id: str, mode: str = "aligned") -> str:
     from services.database import async_session
     from services.routers.generate import generate_outline as _gen_outline
-    async with async_session() as db:
+    async with async_session()() as db:
         result = await _gen_outline(project_id, mode, db)
     return json.dumps(result, ensure_ascii=False)
 
@@ -50,7 +52,7 @@ async def generate_outline(project_id: str, mode: str = "aligned") -> str:
 async def run_compliance_check(project_id: str) -> str:
     from services.database import async_session
     from services.routers.check import check_compliance as _check
-    async with async_session() as db:
+    async with async_session()() as db:
         result = await _check(project_id, db)
     return json.dumps(result, ensure_ascii=False)
 
@@ -59,7 +61,7 @@ async def run_compliance_check(project_id: str) -> str:
 async def run_full_check(project_id: str) -> str:
     from services.database import async_session
     from services.routers.check import full_check as _full
-    async with async_session() as db:
+    async with async_session()() as db:
         result = await _full(project_id, db)
     return json.dumps(result, ensure_ascii=False)
 
@@ -68,7 +70,7 @@ async def run_full_check(project_id: str) -> str:
 async def run_selfcheck(project_id: str) -> str:
     from services.database import async_session
     from services.routers.check import run_selfcheck as _selfcheck
-    async with async_session() as db:
+    async with async_session()() as db:
         result = await _selfcheck(project_id, db)
     return json.dumps(result, ensure_ascii=False)
 
@@ -77,7 +79,7 @@ async def run_selfcheck(project_id: str) -> str:
 async def search_knowledge(kb_id: str, query: str, top_k: int = 5) -> str:
     from services.database import async_session
     from services.routers.knowledge import search_knowledge_base as _search
-    async with async_session() as db:
+    async with async_session()() as db:
         result = await _search(kb_id, query, top_k, db)
     return json.dumps(result, ensure_ascii=False)
 
@@ -93,7 +95,7 @@ async def list_skills() -> str:
 async def get_project_status(project_id: str) -> str:
     from services.database import async_session
     from services.routers.projects import get_project as _get
-    async with async_session() as db:
+    async with async_session()() as db:
         result = await _get(project_id, db)
     return json.dumps(result, ensure_ascii=False)
 
@@ -112,7 +114,7 @@ def get_project_resource(project_id: str) -> str:
     from services.routers.projects import get_project as _get
 
     async def _fetch():
-        async with async_session() as db:
+        async with async_session()() as db:
             return await _get(project_id, db)
 
     loop = asyncio.new_event_loop()

@@ -637,7 +637,7 @@ export default function SettingsPage() {
     }
   };
 
-  const SYSTEM_SUPER_ADMIN_EMAIL = 'admin@bidmaster.pro';
+  const SYSTEM_SUPER_ADMIN_EMAIL = 'admin';
   const isUserSystemAdmin = (userId: string): boolean => {
     const user = rbacUsers.find(u => u.id === userId);
     if (!user) return false;

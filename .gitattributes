@@ -1,0 +1,17 @@
+# 行尾统一：入库一律 LF，避免 Windows/Linux 混用产生无意义 diff
+* text=auto
+
+# 在 Linux 容器里执行的脚本必须是 LF，否则会报 /bin/bash^M 错误
+*.sh text eol=lf
+
+# 二进制文件不做行尾转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.docx binary
+*.xlsx binary
+*.woff binary
+*.woff2 binary

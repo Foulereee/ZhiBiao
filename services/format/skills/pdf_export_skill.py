@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import shutil
@@ -48,7 +49,7 @@ class PdfExportSkill(Skill):
         if not input_path.lower().endswith(".docx"):
             return SkillResult(success=False, error="输入文件必须是.docx格式")
 
-        bookmarks = self._extract_bookmarks(input_path)
+        bookmarks = await asyncio.to_thread(self._extract_bookmarks, input_path)
 
         conversion_result = await self._convert_to_pdf(input_path, output_dir)
         if not conversion_result["success"]:
@@ -61,7 +62,7 @@ class PdfExportSkill(Skill):
         output_path = conversion_result["output_path"]
         method_used = conversion_result["method"]
 
-        page_count = self._count_pdf_pages(output_path)
+        page_count = await asyncio.to_thread(self._count_pdf_pages, output_path)
 
         bookmark_info = self._build_bookmark_info(bookmarks)
 
@@ -103,13 +104,13 @@ class PdfExportSkill(Skill):
     ) -> dict[str, Any]:
         warnings: list[str] = []
 
-        result = self._try_libreoffice(input_path, output_dir)
+        result = await asyncio.to_thread(self._try_libreoffice, input_path, output_dir)
         if result["success"]:
             result["warnings"] = warnings
             return result
         warnings.append(f"LibreOffice转换失败: {result.get('error', '未知错误')}")
 
-        result = self._try_docx2pdf(input_path, output_dir)
+        result = await asyncio.to_thread(self._try_docx2pdf, input_path, output_dir)
         if result["success"]:
             result["warnings"] = warnings
             return result
@@ -217,6 +218,13 @@ class PdfExportSkill(Skill):
             return {"success": False, "error": f"docx2pdf异常: {e}"}
 
     async def _try_reportlab(
+        self, input_path: str, output_dir: str
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(
+            self._try_reportlab_sync, input_path, output_dir
+        )
+
+    def _try_reportlab_sync(
         self, input_path: str, output_dir: str
     ) -> dict[str, Any]:
         try:

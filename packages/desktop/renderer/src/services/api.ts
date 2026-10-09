@@ -161,9 +161,29 @@ export const authApi = {
     api.put('/auth/change-password', { new_password: newPassword }),
 };
 
+// ── 品牌信息 ──────────────────────────────────────────────
+// 品牌名固定在前端源码里（智标），不再在启动时从后端拉取覆盖，
+// 避免服务端 .env 里的名字把界面改成别的品牌。
+export interface AppConfig {
+  name: string;
+  tagline: string;
+  version: string;
+}
+
+export const DEFAULT_APP_CONFIG: AppConfig = {
+  name: '智标',
+  tagline: '全流程智能招投标平台',
+  version: '1.0',
+};
+
+export const appConfigApi = {
+  get: () => api.get<AppConfig & { success: boolean }>('/app-config/config'),
+};
+
 export const projectApi = {
   list: () => api.get<{ projects: Project[] }>('/projects/'),
   create: (name: string) => api.post(`/projects/?name=${encodeURIComponent(name)}`),
+  remove: (id: string) => api.delete(`/projects/${id}`),
   get: (id: string) => api.get(`/projects/${id}`),
   updateStatus: (id: string, status: string) => api.patch(`/projects/${id}/status?status=${status}`),
   confirmGate: (id: string, stage: string) => api.post(`/projects/${id}/gate/${stage}`),
@@ -219,8 +239,8 @@ export const generateApi = {
     const url = `/api/generate/${projectId}/content/stream/${chapterId}?mode=${mode}`;
     return handlers ? streamSSE(url, handlers) : url;
   },
-  streamAllChapters: (projectId: string, mode: string = 'A', handlers?: SSEHandlers): SSEController | string => {
-    const url = `/api/generate/${projectId}/content/stream-all?mode=${mode}`;
+  streamAllChapters: (projectId: string, mode: string = 'A', handlers?: SSEHandlers, totalWords: number = 0, wordCount: number = 0, onlyMissing: boolean = false): SSEController | string => {
+    const url = `/api/generate/${projectId}/content/stream-all?mode=${mode}&total_words=${totalWords}&word_count=${wordCount}&only_missing=${onlyMissing ? 'true' : 'false'}`;
     return handlers ? streamSSE(url, handlers) : url;
   },
   listChapters: (projectId: string) =>
@@ -235,21 +255,28 @@ export const generateApi = {
     api.post(`/generate/${projectId}/structure/${structureType}`),
   scoreCoverage: (projectId: string) =>
     api.post(`/generate/${projectId}/score-coverage`),
-  exportDocx: (projectId: string, opts: { fmt?: 'docx' | 'doc' | 'pdf'; template?: string; applyFormat?: boolean } = {}) => {
+  exportDocx: (projectId: string, opts: { fmt?: 'docx' | 'doc' | 'pdf'; template?: string; applyFormat?: boolean; toc?: boolean; tocLevels?: number } = {}) => {
     const fmt = opts.fmt ?? 'docx';
     const template = opts.template ?? 'default';
     const applyFormat = opts.applyFormat ?? true;
+    // 目录参数：后端 /generate/{id}/export-docx 支持 toc / toc_levels(1-4)，默认生成目录
+    const toc = opts.toc ?? true;
+    const tocLevels = opts.tocLevels ?? 3;
     return api.get(
-      `/generate/${projectId}/export-docx?fmt=${fmt}&template=${template}&apply_format=${applyFormat}`,
+      `/generate/${projectId}/export-docx?fmt=${fmt}&template=${template}&apply_format=${applyFormat}&toc=${toc}&toc_levels=${tocLevels}`,
       { responseType: 'blob' },
     );
   },
   getProjectStatus: (projectId: string) =>
     api.get(`/projects/${projectId}`),
-    pollTask: async (taskId: string, onProgress?: (msg: string) => void, maxPolls: number = 120, interval: number = 5000): Promise<Record<string, unknown>> => {
+    pollTask: async (taskId: string, onProgress?: (msg: string) => void, maxPolls: number = 120, interval: number = 5000, isCurrent?: () => boolean): Promise<Record<string, unknown>> => {
     let consecutiveErrors = 0;
     for (let i = 0; i < maxPolls; i++) {
       await new Promise(r => setTimeout(r, interval));
+      // 用户已切换到别的检查项：立刻停止轮询，旧任务在后台继续跑
+      if (isCurrent && !isCurrent()) {
+        throw new Error('TASK_CANCELLED');
+      }
       try {
         const res = await api.get(`/generate/task/${taskId}`);
         consecutiveErrors = 0;
@@ -302,6 +329,27 @@ export const checkApi = {
   submitCheck: (projectId: string, checkType: string) =>
     api.post(`/check/${projectId}/check-async`, { check_type: checkType }),
   listReports: (projectId: string) => api.get(`/check/${projectId}/reports`),
+  deleteReport: (projectId: string, reportId: string) =>
+    api.delete(`/check/${projectId}/reports/${reportId}`),
+  // --- 修复方案（整改方案）---
+  // 读取已生成的修复方案（未生成时 has_plan=false）
+  getFixPlan: (projectId: string, reportId: string) =>
+    api.get(`/check/${projectId}/reports/${reportId}/fix-plan`),
+  // 提交「逐条生成修复方案」异步任务，返回 { task_id }
+  fixPlan: (projectId: string, reportId: string) =>
+    api.post(`/check/${projectId}/fix-plan?report_id=${encodeURIComponent(reportId)}`),
+  // 单条问题的原文定位（打开文本当前位置）
+  fixLocate: (projectId: string, reportId: string, idx: number) =>
+    api.get(`/check/${projectId}/fix-locate?report_id=${encodeURIComponent(reportId)}&idx=${idx}`),
+  // 一次性返回全部问题的原文位置（黄底/绿底对照）
+  fixLocateAll: (projectId: string, reportId: string) =>
+    api.get(`/check/${projectId}/fix-locate-all?report_id=${encodeURIComponent(reportId)}`),
+  // 写入标书：mode = 'replace' 整段替换 | 'append' 追加到段落末尾
+  fixApply: (projectId: string, reportId: string, idx: number, text?: string, mode: string = 'replace') =>
+    api.post(
+      `/check/${projectId}/fix-apply?report_id=${encodeURIComponent(reportId)}&idx=${idx}`,
+      { text: text ?? null, mode },
+    ),
   getReportContent: (projectId: string, reportId: string, format: string = 'markdown') =>
     api.get(`/check/${projectId}/reports/${reportId}/content?format=${format}`),
   exportReport: (projectId: string, reportId: string, format: string = 'markdown') =>
@@ -318,10 +366,20 @@ export const checkApi = {
       timeout: 300000,
     });
   },
-  pollCheckTask: async (taskId: string, onProgress?: (msg: string) => void, maxPolls: number = 120, interval: number = 3000): Promise<Record<string, unknown>> => {
+  pollCheckTask: async (
+    taskId: string,
+    onProgress?: (msg: string) => void,
+    maxPolls: number = 120,
+    interval: number = 3000,
+    isCurrent?: () => boolean,
+  ): Promise<Record<string, unknown>> => {
     let consecutiveErrors = 0;
     for (let i = 0; i < maxPolls; i++) {
       await new Promise(r => setTimeout(r, interval));
+      // 用户已切换到别的检查项：立刻停止轮询，旧任务在后台继续跑
+      if (isCurrent && !isCurrent()) {
+        throw new Error('TASK_CANCELLED');
+      }
       try {
         const res = await api.get(`/check/task/${taskId}`);
         consecutiveErrors = 0;

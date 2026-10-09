@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 import os
@@ -45,11 +46,11 @@ class DocExportSkill(Skill):
         except Exception as e:
             return SkillResult(success=False, error=f"无法创建输出目录: {e}")
 
-        result = self._try_libreoffice_doc(src, target_dir)
+        result = await asyncio.to_thread(self._try_libreoffice_doc, src, target_dir)
         if result.get("success"):
             return SkillResult(success=True, data=result)
 
-        result = self._try_pandoc(src, target_dir)
+        result = await asyncio.to_thread(self._try_pandoc, src, target_dir)
         if result.get("success"):
             return SkillResult(success=True, data=result)
 

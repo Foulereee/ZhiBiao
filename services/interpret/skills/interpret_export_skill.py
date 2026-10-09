@@ -36,7 +36,7 @@ class InterpretExportSkill(Skill):
                 "content": content,
                 "format": format_type,
                 "size": len(content.encode("utf-8")),
-                "generated_at": datetime.now().isoformat(),
+                "generated_at": datetime.now().astimezone().isoformat(),
             },
         )
 
@@ -114,7 +114,8 @@ class InterpretExportSkill(Skill):
                     lines.append("")
 
         lines.append("---")
-        lines.append("*报告由 BidMaster Pro 自动生成*")
+        from core.settings import get_settings
+        lines.append(f"*报告由 {get_settings().app_name} 自动生成*")
 
         return "\n".join(lines)
 

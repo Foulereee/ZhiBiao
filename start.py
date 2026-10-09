@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-BidMaster Pro 快速启动脚本
+智标 快速启动脚本
 用于检查环境依赖并启动服务
 """
 
@@ -149,7 +149,7 @@ def start_server():
 
 def main():
     print("=" * 50)
-    print("  BidMaster Pro 启动检查")
+    print("  智标 启动检查")
     print("=" * 50)
     print()
     

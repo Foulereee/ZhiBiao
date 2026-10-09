@@ -6,8 +6,11 @@ import { useAppStore } from '../stores/appStore';
 export default function LoginPage() {
   const navigate = useNavigate();
   const { setUser, setToken } = useAppStore();
-  const [email, setEmail] = useState('admin@bidmaster.com');
-  const [password, setPassword] = useState('admin123');
+  // 品牌信息由 App.tsx 启动时统一拉取（.env 的 BMP_APP_*），这里只负责显示
+  const appConfig = useAppStore((s) => s.appConfig);
+  const brandInitial = appConfig.name.trim().charAt(0).toUpperCase() || 'B';
+  const [email, setEmail] = useState('admin');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -86,29 +89,29 @@ export default function LoginPage() {
             margin: '0 auto 16px', fontSize: '24px', color: 'white', fontWeight: 700,
             boxShadow: '0 4px 16px rgba(59,130,246,0.4)',
           }}>
-            B
+            {brandInitial}
           </div>
           <h1 style={{ fontSize: '24px', fontWeight: 700, color: '#0f172a', margin: 0 }}>
-            BidMaster Pro
+            {appConfig.name}
           </h1>
           <p style={{ fontSize: '14px', color: '#64748b', marginTop: '8px' }}>
-            全流程智能招投标平台
+            {appConfig.tagline}
           </p>
         </div>
 
-        <form onSubmit={handleLogin}>
+        <form onSubmit={handleLogin} noValidate>
           <div style={{ marginBottom: '20px' }}>
             <label style={{
               fontSize: '13px', fontWeight: 500, color: '#374151',
               display: 'block', marginBottom: '6px',
             }}>
-              邮箱
+              账号 / 邮箱
             </label>
             <input
-              type="email"
+              type="text"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="请输入邮箱"
+              placeholder="请输入账号（如 admin）"
               required
               style={{
                 width: '100%', padding: '10px 14px',
@@ -175,7 +178,6 @@ export default function LoginPage() {
           marginTop: '24px', textAlign: 'center',
           fontSize: '12px', color: '#94a3b8',
         }}>
-          默认管理员: admin@bidmaster.pro / admin123
         </div>
       </div>
 

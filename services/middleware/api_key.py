@@ -26,13 +26,17 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.database import get_db
-from services.models import ApiKey, ApiKeyUsage
+from services.models import ApiKey, ApiKeyUsage, utcnow
 
 logger = logging.getLogger(__name__)
 
 # 允许跳过 API Key 验证的开发模式（环境变量控制）
 import os
 _DEV_BYPASS = os.environ.get("BIDMASTER_DEV_BYPASS_API_KEY", "").lower() in ("1", "true", "yes")
+
+# 登录会话 Cookie 名称：浏览器直接打开下载链接（window.open / <a href>）时无法带
+# Authorization 头，只能靠同源 Cookie 携带会话 token。登录时由 auth.login 写入。
+SESSION_COOKIE_NAME = "bmp_session"
 
 
 def _hash_key(raw: str) -> str:
@@ -67,13 +71,13 @@ async def _verify_api_key(request: Request, db: AsyncSession) -> ApiKey:
         raise HTTPException(status_code=401, detail="API Key 无效")
     if not api_key.enabled:
         raise HTTPException(status_code=403, detail="API Key 已被禁用")
-    if api_key.expires_at and api_key.expires_at < datetime.now(timezone.utc):
+    if api_key.expires_at and api_key.expires_at < utcnow():
         raise HTTPException(status_code=403, detail="API Key 已过期")
 
     # 记录最后使用时间（异步不阻塞）
     try:
         await db.execute(
-            update(ApiKey).where(ApiKey.id == api_key.id).values(last_used_at=datetime.now(timezone.utc))
+            update(ApiKey).where(ApiKey.id == api_key.id).values(last_used_at=utcnow())
         )
         await db.flush()
     except Exception as e:
@@ -159,7 +163,7 @@ async def consume_credits(
     await db.execute(
         update(ApiKey)
         .where(ApiKey.id == api_key.id)
-        .values(credits_remaining=new_balance, updated_at=datetime.now(timezone.utc))
+        .values(credits_remaining=new_balance, updated_at=utcnow())
     )
 
     # 写入扣费日志
@@ -189,7 +193,7 @@ async def refund_credits(
     await db.execute(
         update(ApiKey)
         .where(ApiKey.id == api_key.id)
-        .values(credits_remaining=new_balance, updated_at=datetime.now(timezone.utc))
+        .values(credits_remaining=new_balance, updated_at=utcnow())
     )
     usage = ApiKeyUsage(
         api_key_id=api_key.id,
@@ -254,6 +258,16 @@ async def require_any_auth(
         try:
             user = await get_current_user(request, db)
             return AuthPrincipal(source="bearer", user=user)
+        except HTTPException:
+            pass
+
+    # 尝试登录 Cookie：window.open / 直接点链接下载等场景浏览器不会带 Authorization 头
+    cookie_token = request.cookies.get(SESSION_COOKIE_NAME, "")
+    if cookie_token:
+        from services.middleware.rbac_middleware import get_user_by_token
+        try:
+            user = await get_user_by_token(cookie_token, db)
+            return AuthPrincipal(source="cookie", user=user)
         except HTTPException:
             pass
 

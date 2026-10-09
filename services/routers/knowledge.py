@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from services.database import get_db
-from services.models import KnowledgeBase as KnowledgeBaseModel
+from services.models import KnowledgeBase as KnowledgeBaseModel, iso_utc
 from services.llm_factory import get_llm_gateway
 from core.rag_engine import Embedder, VectorStore, HybridRetriever
 from core.settings import get_settings
@@ -118,7 +118,7 @@ async def list_knowledge_bases(db: AsyncSession = Depends(get_db)):
             "doc_count": kb.doc_count,
             "embedding_model": kb.embedding_model,
             "collection_name": kb.collection_name,
-            "created_at": kb.created_at.isoformat() if kb.created_at else None,
+            "created_at": iso_utc(kb.created_at),
         }
         for kb in kbs
     ]}
@@ -185,6 +185,13 @@ async def upload_documents(
     kb = result.scalar_one_or_none()
     if not kb:
         raise HTTPException(status_code=404, detail="知识库不存在")
+
+    # 先按 Content-Length 拦一道：否则 50MB 文件会先被完整读进内存才报错
+    if file.size and file.size > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"文件超过 {MAX_UPLOAD_BYTES // 1024 // 1024}MB 上限",
+        )
 
     content = await file.read()
     if len(content) > MAX_UPLOAD_BYTES:
@@ -429,5 +436,5 @@ async def get_kb_meta(
         "doc_count": kb.doc_count,
         "embedding_model": kb.embedding_model,
         "collection_name": kb.collection_name,
-        "created_at": kb.created_at.isoformat() if kb.created_at else None,
+        "created_at": iso_utc(kb.created_at),
     }

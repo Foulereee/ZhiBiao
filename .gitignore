@@ -55,3 +55,22 @@ test_outline_gen.py
 /docs/
 /tests/
 
+# ===== 本地 PostgreSQL 免安装运行时（脚本下载/解压/数据目录） =====
+/.pgsql/
+
+# ===== 开源发布：私有内容与构建产物（不进入公开仓库） =====
+迁移部署/
+输出文档/
+新建文件夹/
+服务器运维说明.md
+zb2-frontend-ui-audit.md
+五小竞赛成果简介*
+2026年阳泉市*
+*.tgz
+*.tar.gz
+*.bak-*
+*.bak-sessionfix
+.tmp/
+dist.prev/
+checkpoints/
+

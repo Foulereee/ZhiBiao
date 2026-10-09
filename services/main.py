@@ -27,7 +27,7 @@ from core.exceptions import (
     ProjectNotFoundError,
 )
 from services.database import init_db, close_db, is_db_ready
-from services.routers import projects, interpret, generate, check, format_doc, skills, llm_config, news, knowledge, rbac, ai_image, auth, agent_runtime, mineru_config, api_key
+from services.routers import projects, interpret, generate, check, format_doc, skills, llm_config, news, knowledge, rbac, ai_image, auth, agent_runtime, mineru_config, api_key, app_config
 
 
 @asynccontextmanager
@@ -58,19 +58,36 @@ async def lifespan(app: FastAPI):
             tm.cleanup_old_tasks()
 
     cleanup_task = asyncio.create_task(_periodic_cleanup())
+
+    # 平台设置里的 LLM 配置要真正生效:启动时读一次,之后周期刷新。
+    # (get_llm_gateway() 每次比对配置签名,签名变了自动重建网关。)
+    from services.llm_factory import llm_config_refresher, refresh_llm_config
+    try:
+        await refresh_llm_config()
+    except Exception as _e:
+        logging.getLogger("llm").warning(f"启动时读取 LLM 配置失败 (可忽略): {_e}")
+    llm_config_task = asyncio.create_task(llm_config_refresher())
+
     yield
     cleanup_task.cancel()
-    try:
-        await cleanup_task
-    except asyncio.CancelledError:
-        pass
+    llm_config_task.cancel()
+    for _t in (cleanup_task, llm_config_task):
+        try:
+            await _t
+        except asyncio.CancelledError:
+            pass
     await close_db()
 
 
+_boot_settings = get_settings()
 app = FastAPI(
-    title="BidMaster Pro API",
-    description="全流程智能招投标平台",
-    version="0.1.0",
+    # 品牌信息统一来自 .env 的 BMP_APP_NAME / BMP_APP_TAGLINE / BMP_APP_VERSION。
+    # 注意：FastAPI 的 title/version 在启动时固定，改完 .env 后 OpenAPI 文档标题
+    # 要重建容器才会变；而 /api/app-config/config、健康检查、前端界面都是
+    # 实时读取的，改完刷新页面即可。
+    title=f"{_boot_settings.app_name} API",
+    description=_boot_settings.app_tagline,
+    version=_boot_settings.app_version,
     lifespan=lifespan,
 )
 
@@ -156,13 +173,26 @@ app.include_router(knowledge.router, prefix="/api/knowledge", tags=["知识库"]
 app.include_router(rbac.router, prefix="/api/rbac", tags=["权限管理"])
 app.include_router(ai_image.router, prefix="/api/ai-image", tags=["AI配图"])
 app.include_router(agent_runtime.router, prefix="/api/agent", tags=["多Agent编排"])
+# 兼容历史路径：router 自带 prefix="/agent"，上面的注册产生 /api/agent/agent/run 等
+# 重复前缀路径（保留，不能删）。这里额外再注册一次同一 router，使干净路径也可用：
+# /api/agent/run、/api/agent/run_step、/api/agent/status/{project_id}、/api/agent/resume/{project_id}
+# 依赖（require_any_auth）与 tags 均随 router 本身保持不变。
+app.include_router(agent_runtime.router, prefix="/api", tags=["多Agent编排"])
 app.include_router(mineru_config.router, prefix="/api/mineru", tags=["MinerU OCR"])
 app.include_router(api_key.router, prefix="/api/api-keys", tags=["API Key 管理"])
+app.include_router(app_config.router, prefix="/api/app-config", tags=["品牌配置"])
 
 
 @app.get("/api/health")
 async def health_check():
-    return {"status": "ok", "app": "BidMaster Pro", "version": "0.1.0", "db_ready": is_db_ready()}
+    settings = get_settings()
+    return {
+        "status": "ok",
+        "app": settings.app_name,
+        "tagline": settings.app_tagline,
+        "version": settings.app_version,
+        "db_ready": is_db_ready(),
+    }
 
 
 @app.get("/api/stats")

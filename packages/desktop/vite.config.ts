@@ -15,7 +15,9 @@ export default defineConfig({
     host: '0.0.0.0',
     proxy: {
       '/api': {
-        target: 'http://localhost:18000',
+        // 默认代理到本地后端；指向远程服务器时设置环境变量 VITE_API_TARGET
+        // 例（PowerShell）: $env:VITE_API_TARGET='http://39.106.251.153'; npm run electron:dev
+        target: process.env.VITE_API_TARGET || 'http://localhost:8000',
         changeOrigin: true,
       },
     },

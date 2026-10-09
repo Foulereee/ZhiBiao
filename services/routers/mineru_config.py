@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +20,9 @@ from services.database import get_db
 from services.llm_factory import get_llm_gateway
 from core.skill_engine.base import SkillContext
 
-router = APIRouter()
+from services.middleware.api_key import require_any_auth
+
+router = APIRouter(dependencies=[Depends(require_any_auth)])
 
 MAX_OCR_UPLOAD_BYTES = 50 * 1024 * 1024  # 50MB
 
@@ -42,32 +45,22 @@ def _env_path() -> str:
 
 
 def _persist_env(payload: MinerUConfigPayload) -> None:
-    env_path = _env_path()
-    lines: list[str] = []
-    if os.path.exists(env_path):
-        with open(env_path, "r", encoding="utf-8") as f:
-            lines = f.readlines()
+    # 只替换这几个键，保留 .env 里原有的注释、分组与顺序。
+    # 容器把宿主机的 .env bind mount 进来了，整文件重写会毁掉宿主机 .env 的注释。
+    from core.env_store import update_env_keys
 
-    env_map: dict[str, str] = {}
-    for line in lines:
-        s = line.strip()
-        if not s or s.startswith("#") or "=" not in s:
-            continue
-        k, _, v = s.partition("=")
-        env_map[k.strip()] = v.strip()
-
-    env_map["BMP_MINERU_MODE"] = payload.mode
+    updates: dict[str, str] = {
+        "BMP_MINERU_MODE": payload.mode,
+        "BMP_MINERU_ENDPOINT": payload.endpoint,
+        "BMP_MINERU_TIMEOUT": str(payload.timeout),
+        "BMP_MINERU_MODEL_VERSION": payload.model_version,
+        "BMP_MINERU_POLL_INTERVAL": str(payload.poll_interval),
+        "BMP_MINERU_MAX_POLLS": str(payload.max_polls),
+    }
     if payload.api_key:
-        env_map["BMP_MINERU_API_KEY"] = payload.api_key
-    env_map["BMP_MINERU_ENDPOINT"] = payload.endpoint
-    env_map["BMP_MINERU_TIMEOUT"] = str(payload.timeout)
-    env_map["BMP_MINERU_MODEL_VERSION"] = payload.model_version
-    env_map["BMP_MINERU_POLL_INTERVAL"] = str(payload.poll_interval)
-    env_map["BMP_MINERU_MAX_POLLS"] = str(payload.max_polls)
+        updates["BMP_MINERU_API_KEY"] = payload.api_key
 
-    with open(env_path, "w", encoding="utf-8") as f:
-        for k, v in env_map.items():
-            f.write(f"{k}={v}\n")
+    update_env_keys(updates, path=_env_path())
 
 
 @router.get("/config")
@@ -175,7 +168,15 @@ async def ocr_file(
 
     upload_dir = Path("./uploads/mineru")
     upload_dir.mkdir(parents=True, exist_ok=True)
-    file_path = upload_dir / file.filename
+    # 文件名必须清洗：原来直接拼 file.filename，传入 "../../x" 可以写到 uploads 之外
+    safe_name = re.sub(r"[^\w.\-]", "_", Path(file.filename or "upload").name) or "upload"
+    file_path = upload_dir / safe_name
+    # 先按 Content-Length 拦一道：否则 50MB 文件会先被完整读进内存才报错
+    if file.size and file.size > MAX_OCR_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"文件超过 {MAX_OCR_UPLOAD_BYTES // 1024 // 1024}MB 上限",
+        )
     content = await file.read()
     if len(content) > MAX_OCR_UPLOAD_BYTES:
         raise HTTPException(
@@ -202,7 +203,14 @@ async def ocr_file(
             },
         },
     )
-    skill_result = await skill.safe_execute(ctx)
+    try:
+        skill_result = await skill.safe_execute(ctx)
+    finally:
+        # OCR 用完即删：这个上传只为本次识别服务，不删会一直堆在 uploads/mineru 里
+        try:
+            file_path.unlink(missing_ok=True)
+        except OSError:
+            pass
     if not skill_result.success:
         raise HTTPException(status_code=500, detail=skill_result.error or "OCR 抽取失败")
     return {"success": True, "data": skill_result.data}

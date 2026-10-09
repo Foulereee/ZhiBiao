@@ -13,19 +13,14 @@ from services.models import (
 )
 
 
-async def get_current_user(
-    request: Request, db: AsyncSession = Depends(get_db)
-) -> User:
+async def get_user_by_token(token: str, db: AsyncSession) -> User:
+    """按会话 token 取用户。
+
+    Bearer 头与登录 Cookie 两条路径共用（Cookie 供 window.open 下载等
+    无法自定义请求头的浏览器场景使用）。
+    """
     from services.routers.auth import verify_token
 
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        raise HTTPException(
-            status_code=401,
-            detail="未提供有效的Authorization头，请使用Bearer Token认证",
-        )
-
-    token = auth_header[7:].strip()
     if not token:
         raise HTTPException(status_code=401, detail="Token不能为空")
 
@@ -43,6 +38,19 @@ async def get_current_user(
         raise HTTPException(status_code=401, detail="用户不存在")
 
     return user
+
+
+async def get_current_user(
+    request: Request, db: AsyncSession = Depends(get_db)
+) -> User:
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401,
+            detail="未提供有效的Authorization头，请使用Bearer Token认证",
+        )
+
+    return await get_user_by_token(auth_header[7:].strip(), db)
 
 
 async def get_current_user_optional(

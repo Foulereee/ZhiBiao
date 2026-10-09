@@ -1,5 +1,5 @@
 # ============================================================================
-# BidMaster Pro - 完整 Docker 编排
+# 智标 - 完整 Docker 编排
 #
 # 部署模式：
 #   A) 全量部署（默认）：docker compose --profile infra up -d
@@ -51,6 +51,12 @@ x-api-env: &api-env
   BMP_LLM_API_BASE: ${LLM_API_BASE:-https://api.deepseek.com}
   BMP_LLM_FALLBACK_MODES: ${LLM_FALLBACK_MODES:-ollama/qwen2.5}
   BMP_LLM_MAX_RETRIES: 3
+  BMP_LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-8192}
+  BMP_LLM_TIMEOUT: ${LLM_TIMEOUT:-300}
+  # 检查类技能单次调用超时(秒):检查模型实测 30-114s,给 150s 余量
+  BMP_LLM_CHECK_TIMEOUT: ${LLM_CHECK_TIMEOUT:-150}
+  # 检查类技能专用模型(留空=跟随平台默认模型):检查是逐条比对,用快模型避免长推理
+  BMP_LLM_CHECK_MODEL: ${LLM_CHECK_MODEL:-}
   # Embedding
   BMP_EMBEDDING_MODE: ${EMBEDDING_MODE:-api}
   BMP_EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-v3}
@@ -73,6 +79,13 @@ x-api-volumes: &api-volumes
   - uploads:/app/uploads
   - ../skills:/app/skills:ro
   - ../templates:/app/templates:ro
+  # 宿主机 .env 挂进容器（可写）。
+  # 作用：① 品牌名等配置由 pydantic 直接从这个文件读，`PUT /api/app-config/config`
+  #       就地改这个文件后 reload_settings() 立即生效，不用重建容器；
+  #       ② llm_config / mineru_config 的「保存配置」写入也真正落到宿主机 .env
+  #       （以前容器里没有 .env，那些写入落在临时文件上，等于白写）。
+  # 前提：宿主机 .env 对容器内 app 用户可写（当前是 0666）。
+  - ../.env:/app/.env
 
 x-default-logging: &default-logging
   driver: json-file
@@ -232,6 +245,9 @@ services:
         condition: service_started
         required: false
     volumes: *api-volumes
+    # celery worker 不提供 HTTP 服务，禁用镜像继承的 HTTP 健康检查（否则永远显示 unhealthy）
+    healthcheck:
+      disable: true
     deploy:
       resources:
         limits:
@@ -253,6 +269,9 @@ services:
         required: false
     volumes:
       - celerybeat:/app/celerybeat
+    # celery beat 不提供 HTTP 服务，禁用镜像继承的 HTTP 健康检查
+    healthcheck:
+      disable: true
     deploy:
       resources:
         limits:

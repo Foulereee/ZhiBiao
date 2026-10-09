@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Bell, User, ChevronRight, LayoutDashboard, X, LogOut, PanelLeftClose, PanelLeftOpen, FolderKanban } from 'lucide-react';
+import { Bell, User, ChevronRight, LayoutDashboard, X, LogOut, PanelLeftClose, PanelLeftOpen, FolderKanban, Menu } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
+// useIsMobile：共享的移动端断点钩子（(max-width: 900px)，定义见 Sidebar.tsx 顶部）
+import { useIsMobile } from './Sidebar';
 
 const pipelineMeta: Record<string, { label: string; step: number; color: string }> = {
   '/interpret': { label: '招标解读', step: 1, color: '#3b82f6' },
@@ -17,10 +19,12 @@ const allSteps = [
   { path: '/format', label: '输出', color: '#475569' },
 ];
 
-export default function Header() {
+export default function Header({ onOpenNav }: { onOpenNav?: () => void }) {
   const location = useLocation();
   const navigate = useNavigate();
   const { currentProjectId, projects, user, logout, sidebarCollapsed, toggleSidebar } = useAppStore();
+  // 移动端：菜单按钮改为打开抽屉（「打开菜单」），由 AppLayout 持有抽屉开关状态
+  const isMobile = useIsMobile();
   const currentProject = currentProjectId
     ? projects.find(p => p.id === currentProjectId) || null
     : null;
@@ -32,6 +36,27 @@ export default function Header() {
   const meta = pipelineMeta[currentPath];
   const [showNotif, setShowNotif] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  // 老版行为：点开通知/账户后，点击页面其它任意位置或按 Esc 即关闭（移动端不必再点一次按钮）
+  const notifRef = useRef<HTMLDivElement>(null);
+  const userMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!showNotif && !showUserMenu) return;
+    const closeAll = () => { setShowNotif(false); setShowUserMenu(false); };
+    const onPointerDown = (e: MouseEvent) => {
+      const target = e.target as Node | null;
+      if (!target) return;
+      if (notifRef.current?.contains(target) || userMenuRef.current?.contains(target)) return;
+      closeAll();
+    };
+    const onKeyDown = (e: KeyboardEvent) => { if (e.key === 'Escape') closeAll(); };
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [showNotif, showUserMenu]);
+  useEffect(() => { setShowNotif(false); setShowUserMenu(false); }, [location.pathname]);
 
   const handleLogout = () => {
     logout();
@@ -47,18 +72,18 @@ export default function Header() {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        padding: '0 24px',
+        padding: isMobile ? '0 12px' : '0 24px',
         position: 'relative',
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
         <button
-          onClick={toggleSidebar}
-          aria-label={sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'}
-          title={sidebarCollapsed ? '展开侧边栏 (Ctrl+B)' : '折叠侧边栏 (Ctrl+B)'}
+          onClick={() => (isMobile ? onOpenNav?.() : toggleSidebar())}
+          aria-label={isMobile ? '打开菜单' : sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'}
+          title={isMobile ? '打开菜单' : sidebarCollapsed ? '展开侧边栏 (Ctrl+B)' : '折叠侧边栏 (Ctrl+B)'}
           style={{
-            width: '32px',
-            height: '32px',
+            width: isMobile ? '36px' : '32px',
+            height: isMobile ? '36px' : '32px',
             padding: 0,
             borderRadius: '6px',
             border: '1px solid var(--color-border)',
@@ -80,7 +105,7 @@ export default function Header() {
             (e.currentTarget as HTMLButtonElement).style.color = 'var(--color-text-secondary)';
           }}
         >
-          {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+          {isMobile ? <Menu size={18} /> : sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
         </button>
         <div style={{ width: '1px', height: '20px', background: 'var(--color-border)' }} />
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
@@ -186,7 +211,7 @@ export default function Header() {
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-        <div style={{ position: 'relative' }}>
+        <div ref={notifRef} style={{ position: 'relative' }}>
           <button
             onClick={() => setShowNotif(!showNotif)}
             style={{
@@ -225,9 +250,11 @@ export default function Header() {
             </div>
           )}
         </div>
-        <div style={{ position: 'relative' }}>
+        <div ref={userMenuRef} style={{ position: 'relative' }}>
           <div
-            style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}
+            aria-label="账户"
+            title="账户"
+            style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', padding: isMobile ? '4px' : 0, borderRadius: '8px' }}
             onClick={() => setShowUserMenu(!showUserMenu)}
           >
             <div style={{

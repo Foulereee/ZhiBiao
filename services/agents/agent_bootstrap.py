@@ -6,7 +6,7 @@
 from core.agent_framework.db_query_tools import DB_QUERY_TOOLS, DbQueryToolFactory
 from core.agent_framework.registry import AgentRegistry
 from core.agent_framework.tool import ToolRegistry
-from core.agent_framework.types import ToolDef
+from core.agent_framework.types import AgentContext, ToolDef
 
 from services.agents.skill_tool_adapter import wrap_skill_for_agent
 
@@ -350,15 +350,22 @@ def register_agent_comm_tools(registry: ToolRegistry):
     """
 
     def _make_ask_handler(target_agent: str):
-        """为 ask_xxx_agent 创建 handler（闭包捕获 target_agent）"""
+        """为 ask_xxx_agent 创建 handler（闭包捕获 target_agent）
+
+        上下文按调用点以 _ctx 传入（ToolRegistry.execute 注入，按 agent 名隔离），
+        发送方直接取本次调用 ctx.agent_name——旧实现把 ctx 写到共享 handler 上，
+        会被后注册的 Agent 覆盖，导致回答投递到错误的 Agent 队列（问答超时）。
+        """
         async def handler(question: str, **kw):
-            if not hasattr(handler, '_agent_ctx') or not handler._agent_ctx:
+            ctx: AgentContext | None = kw.pop("_ctx", None)
+            if ctx is None:
+                ctx = getattr(handler, "_agent_ctx", None)
+            if not ctx:
                 return {"error": "Agent上下文未初始化"}
-            ctx = handler._agent_ctx
             if not ctx.message_bus:
                 return {"error": "MessageBus 不可用"}
-            # 防御：sender 必须已设置（在 ctx_provider 中注入）
-            sender = getattr(handler, '_sender_agent', None)
+            # 发送方 = 本次调用方的 Agent 名
+            sender = ctx.agent_name
             if not sender:
                 return {"error": "发送方Agent未设置"}
             result = await ctx.message_bus.request_response(
@@ -371,15 +378,10 @@ def register_agent_comm_tools(registry: ToolRegistry):
                 return result
             return {"answer": result}
 
-        def ctx_provider(ctx):
-            handler._agent_ctx = ctx
-            handler._sender_agent = ctx.agent_name  # 设置发送方Agent名
-
-        return handler, ctx_provider
+        return handler
 
     # ask_interpret_agent
-    handler_interpret, provider_interpret = _make_ask_handler("tender_interpret_agent")
-    handler_interpret._sender_agent = None  # 由 Agent.__init__ 或 run 时设置
+    handler_interpret = _make_ask_handler("tender_interpret_agent")
     registry.register_global(ToolDef(
         name="ask_interpret_agent",
         description="向招标解读Agent提问，获取招标文件的解读信息。仅当DB查询无法满足时使用（延迟约5-15秒）",
@@ -391,12 +393,10 @@ def register_agent_comm_tools(registry: ToolRegistry):
             "required": ["question"],
         },
         handler=handler_interpret,
-        ctx_provider=provider_interpret,
     ))
 
     # ask_outline_agent
-    handler_outline, provider_outline = _make_ask_handler("outline_agent")
-    handler_outline._sender_agent = None
+    handler_outline = _make_ask_handler("outline_agent")
     registry.register_global(ToolDef(
         name="ask_outline_agent",
         description="向大纲Agent确认结构相关的问题。仅当DB查询无法满足时使用（延迟约5-15秒）",
@@ -408,7 +408,6 @@ def register_agent_comm_tools(registry: ToolRegistry):
             "required": ["question"],
         },
         handler=handler_outline,
-        ctx_provider=provider_outline,
     ))
 
 

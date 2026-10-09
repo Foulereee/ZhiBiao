@@ -20,6 +20,12 @@ class AgentRegistry:
             raise ValueError(f"Agent '{name}' 未注册")
         if ctx is None:
             ctx = AgentContext(agent_id=f"{name}_test", agent_name=name)
+        # 按 agent 隔离存储上下文：工具执行时由 ToolRegistry.execute() 以 _ctx
+        # 参数按调用点传入，不再覆盖全局共享 ToolDef.handler 上的 ctx。
+        tool_registry = getattr(ctx, "tool_registry", None)
+        bind = getattr(tool_registry, "bind_agent_context", None)
+        if callable(bind):
+            bind(name, ctx)
         for tool_name in cls.available_tools:
             tool = ctx.tool_registry.get_global(tool_name)
             if tool and tool.ctx_provider:

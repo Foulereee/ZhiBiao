@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -10,9 +10,35 @@ import {
   Settings,
   ChevronRight,
   AlertCircle,
+  X,
 } from 'lucide-react';
 import logoImg from '../../assets/logo.png';
 import { useAppStore } from '../../stores/appStore';
+
+/**
+ * 移动端断点钩子（对应 9-20 版 layout 模块中的 useMediaQuery("(max-width: 900px)")）。
+ * 由 AppLayout / Header / Sidebar 共享，故在此导出。
+ */
+export function useIsMobile(query = '(max-width: 900px)'): boolean {
+  const [matches, setMatches] = useState<boolean>(() =>
+    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      ? window.matchMedia(query).matches
+      : false,
+  );
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    const mql = window.matchMedia(query);
+    setMatches(mql.matches);
+    const onChange = (e: MediaQueryListEvent) => setMatches(e.matches);
+    if (typeof mql.addEventListener === 'function') {
+      mql.addEventListener('change', onChange);
+      return () => mql.removeEventListener('change', onChange);
+    }
+    mql.addListener(onChange);
+    return () => mql.removeListener(onChange);
+  }, [query]);
+  return matches;
+}
 
 const pipelineSteps = [
   { path: '/interpret', icon: FileSearch, label: '招标解读', step: 1, desc: '上传招标文件，AI智能解读', color: '#3b82f6' },
@@ -63,13 +89,18 @@ function Tooltip({ label, children, show }: { label: string; children: ReactNode
   );
 }
 
-export default function Sidebar() {
+export default function Sidebar({ mobileOpen = false, onNavigate }: { mobileOpen?: boolean; onNavigate?: () => void }) {
   const location = useLocation();
   const navigate = useNavigate();
   const currentPath = location.pathname;
-  const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
+  const storedCollapsed = useAppStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
   const user = useAppStore((s) => s.user);
+  const appConfig = useAppStore((s) => s.appConfig);
+
+  // 移动端固定按展开态渲染，折叠只在桌面端生效（对应旧版 g = isMobile ? false : collapsed）
+  const isMobile = useIsMobile();
+  const sidebarCollapsed = isMobile ? false : storedCollapsed;
 
   const userRoleNames = (user?.roles || []).map(r => r.name);
   const isSystemAdmin = userRoleNames.includes('admin');
@@ -112,9 +143,39 @@ export default function Sidebar() {
 
   const width = sidebarCollapsed ? COLLAPSED_WIDTH : EXPANDED_WIDTH;
 
+  // 版本号归一化：services/api.ts 的 DEFAULT_APP_CONFIG.version 仍是过期默认值 '1.0'（该文件不可改），
+  // 而后端 /api/health 与 .env(BMP_APP_VERSION) 的实际版本为 2.0。
+  // 9-20 版侧边栏此处直接硬编码 "BidMaster Pro v2.0"，故把已知过期值统一显示为 2.0，其余沿用后端下发值。
+  const BACKEND_VERSION = '2.0';
+  const STALE_VERSIONS = new Set(['', '1.0', '1.0.0', 'v1.0']);
+  const rawVersion = String(appConfig?.version ?? '').trim();
+  const displayVersion = STALE_VERSIONS.has(rawVersion.toLowerCase()) ? BACKEND_VERSION : rawVersion;
+
   return (
     <aside
-      style={{
+      className={isMobile ? 'bmp-sidebar-drawer' : 'bmp-sidebar-static'}
+      data-open={mobileOpen ? '1' : '0'}
+      style={isMobile ? {
+        position: 'fixed',
+        top: 0,
+        bottom: 0,
+        left: 0,
+        zIndex: 70,
+        width: EXPANDED_WIDTH,
+        minWidth: EXPANDED_WIDTH,
+        maxWidth: '86vw',
+        background: '#ffffff',
+        display: 'flex',
+        flexDirection: 'column',
+        overflowY: 'auto',
+        overflowX: 'hidden',
+        color: '#1e293b',
+        borderRight: '1px solid #e2e8f0',
+        boxShadow: mobileOpen ? '0 0 40px rgba(15,23,42,0.28)' : 'none',
+        transform: mobileOpen ? 'translateX(0)' : 'translateX(-102%)',
+        transition: 'transform 0.22s ease',
+        WebkitOverflowScrolling: 'touch',
+      } : {
         width,
         minWidth: width,
         background: '#ffffff',
@@ -143,7 +204,7 @@ export default function Sidebar() {
       >
         <img
           src={logoImg}
-          alt="BidMaster Pro"
+          alt={appConfig.name}
           style={{
             width: '32px',
             height: '32px',
@@ -155,18 +216,44 @@ export default function Sidebar() {
         {!sidebarCollapsed && (
           <div style={{ minWidth: 0, flex: 1 }}>
             <h1 style={{ fontSize: '15px', fontWeight: 700, color: '#0f172a', margin: 0, whiteSpace: 'nowrap' }}>
-              BidMaster Pro
+              {appConfig.name}
             </h1>
             <p style={{ fontSize: '10px', color: '#94a3b8', marginTop: '1px', whiteSpace: 'nowrap' }}>
-              全流程智能招投标平台
+              {appConfig.tagline}
             </p>
           </div>
+        )}
+        {isMobile && (
+          <button
+            onClick={(e) => {
+              // 品牌行父级 onClick 会跳转工作台，这里阻断冒泡：点「关闭菜单」只关抽屉，不跳页
+              e.stopPropagation();
+              onNavigate?.();
+            }}
+            aria-label="关闭菜单"
+            style={{
+              flexShrink: 0,
+              width: '32px',
+              height: '32px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              border: '1px solid #e2e8f0',
+              borderRadius: '8px',
+              background: 'white',
+              color: '#64748b',
+              cursor: 'pointer',
+            }}
+          >
+            <X size={16} />
+          </button>
         )}
       </div>
 
       <NavLink
         to="/dashboard"
         title="工作台"
+        onClick={() => onNavigate?.()}
         style={({ isActive }) => ({
           display: 'flex',
           alignItems: 'center',
@@ -242,6 +329,7 @@ export default function Sidebar() {
               <NavLink
                 to={step.path}
                 title={sidebarCollapsed ? `${step.label} - ${step.desc}` : undefined}
+                onClick={() => onNavigate?.()}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -344,6 +432,7 @@ export default function Sidebar() {
           <NavLink
             key={item.path}
             to={item.path}
+            onClick={() => onNavigate?.()}
             title={sidebarCollapsed ? `${item.label} - ${item.desc}` : undefined}
             style={({ isActive }) => ({
               display: 'flex',
@@ -383,7 +472,7 @@ export default function Sidebar() {
           color: '#cbd5e1',
           textAlign: 'center',
         }}>
-          BidMaster Pro v2.0
+          {appConfig.name} v{displayVersion}
         </div>
       )}
 
@@ -394,7 +483,7 @@ export default function Sidebar() {
           display: 'flex',
           justifyContent: 'center',
         }}>
-          <span style={{ fontSize: '9px', color: '#cbd5e1' }}>v2.0</span>
+          <span style={{ fontSize: '9px', color: '#cbd5e1' }}>v{displayVersion}</span>
         </div>
       )}
     </aside>

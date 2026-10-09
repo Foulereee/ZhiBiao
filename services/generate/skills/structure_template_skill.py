@@ -207,12 +207,16 @@ class ScoreCoverageSkill(Skill):
         if not score_items:
             return SkillResult(success=False, error="评分矩阵中无评分项")
 
+        # 兜底：调用方可能直接传 outlines.tree 这个 dict（历史 bug 就是这里被
+        # isinstance(..., list) 判掉，导致 outline_sections 恒为 []、覆盖率恒为 0）
+        titles = self._flatten_titles(outline_sections)
+
         coverage_map = {}
         covered_items = []
         uncovered_items = []
 
         for item in score_items:
-            item_name = item.get("name", item.get("item", ""))
+            item_name = item.get("name") or item.get("item") or item.get("category") or ""
             item_score = item.get("score", item.get("weight", 0))
             matched_section = self._find_matching_section(item_name, outline_sections)
 
@@ -227,7 +231,7 @@ class ScoreCoverageSkill(Skill):
                 uncovered_items.append({
                     "score_item": item_name,
                     "score": item_score,
-                    "suggestion": f"建议添加章节覆盖此项",
+                    "suggestion": "建议添加章节覆盖此项",
                 })
 
         total_score = sum(item.get("score", 0) for item in score_items)
@@ -267,28 +271,55 @@ class ScoreCoverageSkill(Skill):
 
         return items
 
-    def _find_matching_section(self, score_item: str, sections: list) -> str:
-        if not sections:
+    def _flatten_titles(self, sections) -> list[str]:
+        """把大纲（list / dict{'chapters':[...]} / 任意层级 children）拍平成标题列表。"""
+        roots = sections
+        if isinstance(sections, dict):
+            roots = (
+                sections.get("chapters")
+                or sections.get("sections")
+                or sections.get("outline")
+                or []
+            )
+        if not isinstance(roots, list):
+            return []
+
+        titles: list[str] = []
+
+        def walk(nodes):
+            for node in nodes or []:
+                if isinstance(node, dict):
+                    title = str(node.get("title") or "").strip()
+                    if title:
+                        titles.append(title)
+                    walk(node.get("children"))
+                elif isinstance(node, str) and node.strip():
+                    titles.append(node.strip())
+
+        walk(roots)
+        return titles
+
+    def _find_matching_section(self, score_item: str, sections) -> str:
+        """为评分项找最贴合的大纲章节标题，找不到返回 ""。
+
+        旧实现用 `title in item or item in title` 子串判断，再把评分项按空格
+        切成关键词 —— 中文没有空格，keywords 恒等于整串，第二条分支永远不命中；
+        而评分项措辞（"企业类似业绩"）与章节标题（"企业信誉与类似业绩"）
+        本来就不会字面相等，于是覆盖率长期为 0。
+        现在复用 outline_gen_skill 的中文相似度（LCS + 特征词 + 字符Dice）。
+        """
+        item_name = str(score_item or "").strip()
+        if not item_name:
             return ""
 
-        score_lower = score_item.lower()
+        titles = self._flatten_titles(sections)
+        if not titles:
+            return ""
 
-        for section in sections:
-            if isinstance(section, dict):
-                title = section.get("title", "")
-                if title and (title.lower() in score_lower or score_lower in title.lower()):
-                    return title
-                children = section.get("children", [])
-                if children:
-                    result = self._find_matching_section(score_item, children)
-                    if result:
-                        return result
+        from services.generate.skills.outline_gen_skill import (
+            SCORE_MATCH_THRESHOLD,
+            best_matching_title,
+        )
 
-        keywords = score_lower.split()
-        for section in sections:
-            if isinstance(section, dict):
-                title = section.get("title", "").lower()
-                if any(kw in title for kw in keywords if len(kw) >= 2):
-                    return section.get("title", "")
-
-        return ""
+        title, score = best_matching_title(item_name, titles)
+        return title if score >= SCORE_MATCH_THRESHOLD else ""

@@ -25,6 +25,9 @@ logger = logging.getLogger(__name__)
 MAX_CONCURRENT = 4
 STEP2_TIMEOUT = 120
 
+# 每页约 800 字(用户实测),结构模板的目标页数换算成字数喂给模型
+CHARS_PER_PAGE = 800
+
 # 文本截取限制（v7.0.0: 大幅放宽以减少信息丢失）
 STEP1_TEXT_LIMIT = 15000
 STEP2_SCORING_LIMIT = 1500
@@ -53,7 +56,9 @@ def _format_structure_sections(sections: list[dict]) -> str:
         if hint:
             extras.append(f"内容提示: {hint}")
         if page:
-            extras.append(f"目标{page}页")
+            # 统一口径:每页约 800 字(用户实测导出 docx 每页约 800 字),
+            # 不再让模型按"页"思考,否则页数口径前后不一致。
+            extras.append(f"目标约{int(page) * CHARS_PER_PAGE}字")
         if extras:
             line += f"（{'，'.join(extras)}）"
         lines.append(line)
@@ -180,6 +185,105 @@ def _tokenize_chinese(text: str) -> set[str]:
     return tokens
 
 
+# 评分项 → 章节 的匹配置信度下限。
+# 实测：真实评分项「企业类似业绩」对章节「企业信誉与类似业绩」=0.67、
+# 「履约能力与财务状况」对「财务状况与社保纳税证明」=0.44，
+# 而泛化词「技术部分」对任何章节都 <=0.25 —— 0.30 能干净地分开这两类。
+SCORE_MATCH_THRESHOLD = 0.30
+
+
+def _lcs_length(a: str, b: str) -> int:
+    """最长公共子串长度（必须连续）。"""
+    if not a or not b:
+        return 0
+    prev = [0] * (len(b) + 1)
+    best = 0
+    for i in range(1, len(a) + 1):
+        cur = [0] * (len(b) + 1)
+        ai = a[i - 1]
+        for j in range(1, len(b) + 1):
+            if ai == b[j - 1]:
+                cur[j] = prev[j - 1] + 1
+                if cur[j] > best:
+                    best = cur[j]
+        prev = cur
+    return best
+
+
+def _char_dice(a: str, b: str) -> float:
+    """字符二元 Dice 系数：中文里对「企业信用」/「企业信誉」这类近义词最敏感。"""
+    if not a or not b:
+        return 0.0
+    sa, sb = set(a), set(b)
+    if not sa or not sb:
+        return 0.0
+    return 2 * len(sa & sb) / (len(sa) + len(sb))
+
+
+def score_item_similarity(item_name: str, title: str) -> float:
+    """评分项名 与 章节标题 的相似度（0~1）。
+
+    三种信号取最大值，专门解决中文没有词边界、评分项措辞与章节标题
+    永远不字面相等的问题（旧实现用 `in` 子串匹配 + 按空格 split，
+    中文下恒不命中，覆盖率因此永远是 0）。
+    """
+    item = re.sub(r"\s+", "", str(item_name or ""))
+    ttl = re.sub(r"\s+", "", str(title or ""))
+    if not item or not ttl:
+        return 0.0
+    # 1) 字面包含：最可靠
+    if item in ttl or ttl in item:
+        return 1.0
+    # 2) 最长公共子串 占 评分项 的比例
+    lcs_ratio = _lcs_length(item, ttl) / max(len(item), 1)
+    # 3) 2-4 字特征词命中率
+    item_tokens = _tokenize_chinese(item)
+    ttl_tokens = _tokenize_chinese(ttl)
+    overlap = len(item_tokens & ttl_tokens) / max(len(item_tokens), 1) if item_tokens else 0.0
+    # 4) 字符 Dice，兜住近义词
+    return max(lcs_ratio, overlap, _char_dice(item, ttl))
+
+
+def best_matching_title(item_name: str, titles: list[str]) -> tuple[str, float]:
+    """在一批标题里找与评分项最贴合的一个，返回 (标题, 相似度)。"""
+    best_title, best_score = "", 0.0
+    for title in titles or []:
+        score = score_item_similarity(item_name, title)
+        if score > best_score:
+            best_score, best_title = score, title
+    return best_title, best_score
+
+
+def match_score_items_to_chapters(scoring_items: list[dict], chapters: list[dict]) -> dict:
+    """把评分项映射到最贴合的一级章节，返回 {评分项名: 章节id}。
+
+    低于 SCORE_MATCH_THRESHOLD 的项**故意不映射**（宁缺毋滥）：
+    错误的映射会让正文去写不相干的内容，比不映射更糟。
+    """
+    mapping: dict[str, str] = {}
+    usable = [
+        c for c in (chapters or [])
+        if isinstance(c, dict) and c.get("title")
+    ]
+    if not usable:
+        return mapping
+
+    for item in scoring_items or []:
+        if not isinstance(item, dict):
+            continue
+        item_name = item.get("item") or item.get("name") or item.get("category") or ""
+        if not item_name:
+            continue
+        best_id, best_score = "", 0.0
+        for ch in usable:
+            score = score_item_similarity(item_name, ch.get("title", ""))
+            if score > best_score:
+                best_score, best_id = score, str(ch.get("id", ""))
+        if best_id and best_score >= SCORE_MATCH_THRESHOLD:
+            mapping[str(item_name)] = best_id
+    return mapping
+
+
 def _build_step1_messages(
     text: str, scoring_text: str, mode: str, structure_hint: str = ""
 ) -> list[dict]:
@@ -231,6 +335,22 @@ def _build_step1_messages(
         ]
         if structure_hint:
             user_msgs.append({"role": "user", "content": structure_hint})
+        if mode == "aligned":
+            # 用户选了"对齐评分项模式",但解析结果里没有评分矩阵(rows 为空)。
+            # 此时提示词里一个具体评分项都没有,大纲只是"看起来"对齐了;
+            # 所以明确要求模型自己先从招标文件里把评分项提取出来再对齐。
+            logger.warning(
+                "[OutlineGenSkill] mode=aligned 但 scoring_matrix 无 rows:"
+                "提示词改为要求模型自行从招标文件中提取评分项"
+            )
+            user_msgs.append({
+                "role": "user",
+                "content": (
+                    "【对齐评分项模式】请先从上面的招标文件中逐条提取评分办法/评分标准里的"
+                    "评分项(含分值),列成清单;再让一级目录逐条覆盖这些评分项,"
+                    "一级目录名称尽量与评分项名称一致。"
+                ),
+            })
         user_msgs.append(
             {"role": "user", "content": "请根据以上招标文件内容，生成投标文件的一级目录结构。每个标题必须有实际含义，不要使用占位符。"}
         )
@@ -463,35 +583,18 @@ class OutlineGenSkill(Skill):
         outline = {"chapters": full_chapters}
 
         if mode == "aligned" and scoring_items:
-            score_mapping = {}
-            for item in scoring_items:
-                item_name = item.get("item", item.get("category", ""))
-                if not item_name:
-                    continue
-                item_tokens = _tokenize_chinese(item_name)
-                best_id = ""
-                best_score = 0
-                for ch in full_chapters:
-                    if not ch:
-                        continue
-                    ch_title = ch["title"]
-                    ch_tokens = _tokenize_chinese(ch_title)
-                    # 词级匹配：计算 item 特征词在章节标题词集中的命中率
-                    if not item_tokens:
-                        continue
-                    hits = len(item_tokens & ch_tokens)
-                    # 归一化得分 = 命中词数 / item总词数
-                    score = hits / max(len(item_tokens), 1)
-                    # 额外加分：如果 item_name 整体出现在标题中
-                    if item_name in ch_title or ch_title in item_name:
-                        score += 2.0
-                    if score > best_score:
-                        best_score = score
-                        best_id = ch["id"]
-                # 仅当匹配置信度足够时才建立映射
-                if best_id and best_score >= 0.3:
-                    score_mapping[item_name] = best_id
+            # 统一走 score_item_similarity（LCS + 特征词 + 字符Dice），
+            # 旧的 "词命中率 + 0.3 阈值" 对中文实际只有字面重合才生效，
+            # 导致 score_mapping 常为空 → 正文生成完全收不到评分项提示。
+            score_mapping = match_score_items_to_chapters(scoring_items, full_chapters)
             outline["score_mapping"] = score_mapping
+            if not score_mapping:
+                logger.warning(
+                    "[OutlineGenSkill] score_mapping 为空: 评分项与一级章节标题无一达到 "
+                    f"阈值 {SCORE_MATCH_THRESHOLD}，正文将不会收到评分项提示"
+                )
+            else:
+                logger.info(f"[OutlineGenSkill] score_mapping 命中 {len(score_mapping)}/{len(scoring_items)} 项")
 
         return SkillResult(success=True, data={"outline": outline, "mode": mode})
 

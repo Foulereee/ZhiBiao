@@ -1,8 +1,10 @@
 {
   "name": "bidmaster-pro-desktop",
   "version": "0.1.0",
-  "description": "BidMaster Pro - 全流程智能招投标平台",
+  "description": "智标 - 全流程智能招投标平台（AGPL-3.0 衍生版）",
   "main": "main/index.js",
+  "license": "AGPL-3.0-only",
+  "author": "Foulereee <1817558146@qq.com>",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",

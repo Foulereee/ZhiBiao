@@ -13,7 +13,16 @@ from core.skill_engine.base import Skill, SkillContext, SkillResult
 
 logger = logging.getLogger(__name__)
 
-REVISION_AUTHOR = "BidMaster-Pro"
+def _default_revision_author() -> str:
+    """docx 修订作者，跟随 .env 里的产品名（BMP_APP_NAME）。"""
+    try:
+        from core.settings import get_settings
+
+        return get_settings().app_name
+    except Exception:  # pragma: no cover - 配置不可用时退回中性名字
+        return "智标"
+
+
 REVISION_DATE = datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -28,7 +37,7 @@ class RevisionSkill(Skill):
         original_path = ctx.parameters.get("original_path", "")
         revised_path = ctx.parameters.get("revised_path", "")
         output_dir = ctx.parameters.get("output_dir", "")
-        author = ctx.parameters.get("author", REVISION_AUTHOR)
+        author = ctx.parameters.get("author") or _default_revision_author()
 
         if not original_path:
             return SkillResult(success=False, error="未提供原始文件路径(original_path)")

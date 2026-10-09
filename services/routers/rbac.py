@@ -17,6 +17,7 @@ from services.models import (
     RBACPermission,
     RBACUserRole,
     RBACRolePermission,
+    iso_utc,
 )
 from services.middleware.rbac_middleware import get_current_user
 
@@ -179,7 +180,7 @@ async def list_roles(db: AsyncSession = Depends(get_db)):
                 "description": r.description,
                 "is_system": r.is_system,
                 "permissions": role_perms.get(str(r.id), []),
-                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "created_at": iso_utc(r.created_at),
             }
             for r in roles
         ]
@@ -361,7 +362,7 @@ async def list_users(db: AsyncSession = Depends(get_db)):
                 "name": u.name,
                 "avatar": u.avatar,
                 "roles": user_roles.get(str(u.id), []),
-                "created_at": u.created_at.isoformat() if u.created_at else None,
+                "created_at": iso_utc(u.created_at),
             }
             for u in users
         ]

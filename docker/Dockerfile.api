@@ -16,6 +16,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 # 编译期系统依赖（build-essential 编译 C 扩展；libpq-dev 编译 asyncpg；
 # libjpeg-dev/zlib1g-dev 编译 Pillow/pymupdf；libffi-dev 编译 cryptography）
+# 国内部署：Debian 源替换为阿里云镜像加速
+RUN sed -i 's/deb\.debian\.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list 2>/dev/null || true
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         libpq-dev \
@@ -29,8 +32,8 @@ WORKDIR /app
 # 先只拷贝依赖声明 + readme，最大化利用层缓存
 COPY pyproject.toml README.md ./
 
-# 安装生产依赖到独立 prefix
-RUN pip install --prefix=/install .
+# 安装生产依赖到独立 prefix（国内 PyPI 镜像加速）
+RUN pip install --prefix=/install -i https://mirrors.aliyun.com/pypi/simple/ .
 
 
 # ─────────────── Stage 2: runtime ───────────────
@@ -53,6 +56,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 #   libpango-1.0-0 libpangoft2-1.0-0 libcairo2 libgdk-pixbuf-xlib-2.0-0 — weasyprint
 #   curl                — healthcheck
 #   tzdata              — 时区
+# 国内部署：Debian 源替换为阿里云镜像加速
+RUN sed -i 's/deb\.debian\.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list 2>/dev/null || true
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libpq5 \
         libjpeg62-turbo \
@@ -89,7 +95,8 @@ COPY --chown=app:app services/middleware/ /app/services/middleware/
 
 # 拷贝入口脚本（按 BMP_DB_TYPE 等待对应数据库就绪）
 COPY --chown=app:app docker/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+# 防御：Windows 检出可能带 CRLF，剥离 \r 后赋可执行权限
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 
 # 创建运行时数据目录并赋权（通过 volume 挂载持久化）
 RUN mkdir -p /app/projects /app/chroma_db /app/uploads /app/skills /app/templates \

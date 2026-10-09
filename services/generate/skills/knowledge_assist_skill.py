@@ -68,7 +68,7 @@ class KnowledgeAssistSkill(Skill):
             from services.routers.knowledge import search_knowledge_base
             from services.database import async_session
 
-            async with async_session() as db:
+            async with async_session()() as db:
                 result = await search_knowledge_base(kb_id, query, top_k, db)
                 return result.get("results", [])
         except Exception as e:

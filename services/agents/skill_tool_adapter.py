@@ -3,7 +3,9 @@
 将现有的 Skill 类包装为 Agent 可调用的 ToolDef。
 关键设计：Skill 需要 ctx.project_id / ctx.db / ctx.llm，
 但 LLM Function Calling 不会传递这些参数。
-因此使用 ctx_provider 模式从 AgentContext 注入上下文。
+因此上下文在**每次调用时**由 ToolRegistry.execute() 以 `_ctx` 参数传入
+（按 agent 名隔离存储），而不是写到全局共享的 handler 属性上——
+同一个 ToolDef 会被多个 Agent 共用，共享属性会被后注册的 Agent 覆盖。
 """
 
 from __future__ import annotations
@@ -33,12 +35,15 @@ def wrap_skill_for_agent(
         """工具执行入口——由 ToolRegistry.execute() 调用。
 
         kwargs 是 LLM 传入的参数（如 tender_text/bid_text 等）。
-        project_id/db/llm 从 handler 的 _agent_ctx 属性注入。
+        _ctx（AgentContext）由 ToolRegistry.execute() 按调用点/agent 名传入，
+        不再依赖 handler 上的共享属性（会被其它 Agent 覆盖）。
         """
-        if not hasattr(handler, '_agent_ctx') or handler._agent_ctx is None:
+        ctx: AgentContext | None = kwargs.pop("_ctx", None)
+        if ctx is None:
+            # 兼容回退：旧路径（ctx_provider 注入）仍可用
+            ctx = getattr(handler, "_agent_ctx", None)
+        if ctx is None:
             return {"error": "Agent上下文未初始化，请通过 ctx_provider 注入"}
-
-        ctx: AgentContext = handler._agent_ctx
 
         # 分离 LLM 传入的参数和注入的上下文
         llm_params = dict(kwargs)  # LLM Function Calling 传入的参数
@@ -57,14 +62,9 @@ def wrap_skill_for_agent(
             return result.data
         return {"error": result.error, "warnings": result.warnings}
 
-    def ctx_provider(ctx: AgentContext):
-        """Agent 创建时将 AgentContext 注入 handler"""
-        handler._agent_ctx = ctx
-
     return ToolDef(
         name=tool_name,
         description=description,
         parameters=param_schema,
         handler=handler,
-        ctx_provider=ctx_provider,
     )

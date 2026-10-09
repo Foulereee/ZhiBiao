@@ -110,6 +110,19 @@ export default function DashboardPage() {
   const displayedProject = currentProject || projects[0];
   const currentStep = displayedProject ? (statusToStep[displayedProject.status] ?? 0) : 0;
 
+  const handleDeleteProject = async () => {
+    const target = displayedProject;
+    if (!target) { window.alert('当前没有可删除的项目'); return; }
+    if (!window.confirm(`确定要删除项目「${target.name}」吗？\n\n将同时删除该项目的章节正文、招标文档、分析结果和检查报告，删除后不可恢复。`)) return;
+    try {
+      await projectApi.remove(target.id);
+      if (currentProjectId === target.id) setCurrentProject('');
+      await loadProjects();
+    } catch (e) {
+      window.alert('删除失败：' + (e instanceof Error ? e.message : '未知错误'));
+    }
+  };
+
   const totalProjects = projects.length;
   const completedProjects = projects.filter(p => p.status === 'completed' || p.status === 'archived').length;
   const inProgressProjects = projects.filter(p => !['completed', 'archived', 'created'].includes(p.status)).length;
@@ -124,17 +137,33 @@ export default function DashboardPage() {
             全流程智能招投标，按步骤推进
           </p>
         </div>
-        <button
-          onClick={() => { setShowCreate(true); setNewProjectName(''); }}
-          style={{
-            padding: '8px 18px', background: 'var(--color-primary)', color: 'white',
-            border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '13px', fontWeight: 600,
-            display: 'flex', alignItems: 'center', gap: '6px',
-            boxShadow: '0 2px 8px rgba(26,86,219,0.25)',
-          }}
-        >
-          <Plus size={15} /> 新建项目
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <button
+            onClick={handleDeleteProject}
+            disabled={!displayedProject}
+            title={displayedProject ? `删除项目「${displayedProject.name}」` : '当前没有可删除的项目'}
+            style={{
+              padding: '8px 18px', background: 'white', color: '#dc2626',
+              border: '1px solid #fecaca', borderRadius: '8px',
+              cursor: displayedProject ? 'pointer' : 'not-allowed',
+              fontSize: '13px', fontWeight: 600, opacity: displayedProject ? 1 : 0.5,
+              display: 'flex', alignItems: 'center', gap: '6px',
+            }}
+          >
+            <span style={{ fontSize: '14px', lineHeight: 1 }}>🗑</span> 删除项目
+          </button>
+          <button
+            onClick={() => { setShowCreate(true); setNewProjectName(''); }}
+            style={{
+              padding: '8px 18px', background: 'var(--color-primary)', color: 'white',
+              border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '13px', fontWeight: 600,
+              display: 'flex', alignItems: 'center', gap: '6px',
+              boxShadow: '0 2px 8px rgba(26,86,219,0.25)',
+            }}
+          >
+            <Plus size={15} /> 新建项目
+          </button>
+        </div>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', marginBottom: '18px' }}>

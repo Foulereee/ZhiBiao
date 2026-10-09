@@ -1,26 +1,33 @@
-# BidMaster Pro - 全流程智能招投标平台
+# 智标 - 全流程智能招投标平台
 
 <div align="center">
 
 ![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.12+-green.svg)
-![License](https://img.shields.io/badge/license-MIT-orange.svg)
+![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)
+![Based on](https://img.shields.io/badge/based%20on-guangshu100%2FBidMaster--Pro-lightgrey.svg)
 
 **AI 智能招投标助手 · 标书生成 · 投标生成 · 投标检查 · 文档排版 全流程自动化**
 
-[功能特性](#功能特性) • [界面预览](#界面预览) • [技术架构](#技术架构) • [快速开始](#快速开始) • [项目结构](#项目结构) • [联系作者](#-联系作者)
+[功能特性](#功能特性) • [界面预览](#界面预览) • [技术架构](#技术架构) • [快速开始](#快速开始) • [项目结构](#项目结构) • [开源许可](#-开源许可) • [联系方式](#-联系方式)
 
-[![联系作者](https://img.shields.io/badge/💬_联系作者-公众号回复_bidmaster-07C160?style=for-the-badge)](#-联系作者)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
+[![GitHub](https://img.shields.io/badge/GitHub-Foulereee-181717?style=for-the-badge&logo=github)](https://github.com/Foulereee)
+[![Email](https://img.shields.io/badge/Email-1817558146%40qq.com-EA4335?style=for-the-badge&logo=gmail)](mailto:1817558146@qq.com)
 
 </div>
 
-> 🚀 **全流程智能招投标 Agent**：4 阶段流水线（**招标解读 / 投标生成 / 投标检查 / 文档排版**），多 Agent 协同 + 可编排工作流，**21 项专业合规检查规则**、**多 LLM 供应商灵活切换**（DeepSeek / 硅基流动 / OpenAI / 通义等），轻量级 Skill 引擎 + 可插拔能力，RAG 知识库（支持**语义重排**与公司画像过滤），MinerU 扫描件 OCR 抽取，商机监控 + 今日热点聚合，桌面客户端 / 服务端 / Docker 一键部署。喜欢给个 ⭐ Star！
+> 🚀 **全流程智能招投标 Agent**：4 阶段流水线（**招标解读 / 投标生成 / 投标检查 / 文档排版**），多 Agent 协同 + 可编排工作流，**21 项专业合规检查规则**、**多 LLM 供应商灵活切换**（DeepSeek / 硅基流动 / OpenAI / 通义等），轻量级 Skill 引擎 + 可插拔能力，RAG 知识库（支持**语义重排**与公司画像过滤），MinerU 扫描件 OCR 抽取，商机监控 + 今日热点聚合，桌面客户端 / 服务端 / Docker 一键部署。
+>
+> 💡 **部署形态**：默认 **纯 B/S（浏览器访问）** —— 服务端 nginx 站点 + API，用户端只需浏览器，无需安装任何客户端。
+
+> 本项目基于 [guangshu100/BidMaster-Pro](https://github.com/guangshu100/BidMaster-Pro)（AGPL-3.0）二次开发，感谢原作者；修改说明见 [NOTICE.md](NOTICE.md)。
 
 ---
 
 ## 📋 项目简介
 
-BidMaster Pro 是基于 AI Agent 架构的全流程智能招投标平台。通过 LLM（大语言模型）、RAG（检索增强生成）和 Skill Engine（技能引擎）三大核心引擎，实现从**招标文件解读**、**投标书自动生成**、**合规性检查**到**文档排版输出**的完整工作流自动化。
+智标 是基于 AI Agent 架构的全流程智能招投标平台。通过 LLM（大语言模型）、RAG（检索增强生成）和 Skill Engine（技能引擎）三大核心引擎，实现从**招标文件解读**、**投标书自动生成**、**合规性检查**到**文档排版输出**的完整工作流自动化。
 
 - **智能标书生成**: 自动理解招标文件，一键生成高质量投标书
 - **投标流程自动化**: 大纲生成、内容填充、格式排版一键完成
@@ -132,11 +139,11 @@ BidMaster Pro 是基于 AI Agent 架构的全流程智能招投标平台。通�
 │  Core Engines                                        │
 │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐│
 │  │ Agent Engine │ │ Skill Engine │ │  RAG Engine  ││
-│  │  LangGraph   │ │  Plugin Sys  │ │  ChromaDB    ││
+│  │  Supervisor  │ │  Plugin Sys  │ │  ChromaDB    ││
 │  └──────────────┘ └──────────────┘ └──────────────┘│
 │  ┌──────────────┐ ┌──────────────┐                  │
 │  │  LLM Gateway │ │ Doc Engine   │                  │
-│  │  LiteLLM     │ │ Multi-Parser │                  │
+│  │ OpenAI SDK   │ │ Multi-Parser │                  │
 │  └──────────────┘ └──────────────┘                  │
 ├─────────────────────────────────────────────────────┤
 │  Infrastructure                                      │
@@ -164,9 +171,10 @@ BidMaster Pro 是基于 AI Agent 架构的全流程智能招投标平台。通�
 #### AI & LLM
 | 技术 | 用途 | 版本 |
 |------|------|------|
-| **LiteLLM** | LLM 统一接口 | >=1.0 |
-| **LangGraph** | Agent 工作流编排 | >=0.2 |
-| **LangChain-Core** | LLM 基础组件 | >=0.3 |
+| **OpenAI SDK** | LLM 调用（OpenAI 兼容端点，直连；未走 litellm 转发） | >=1.0 |
+| **自研多 Agent 框架** | SupervisorAgent 模板编排 + Agent 池 + 消息总线 + 检查点续跑 | — |
+| **LangGraph** | 可选编排引擎（`core/agent_engine/`，预留、未接入运行路径） | >=0.2 |
+| **LangChain-Core** | 未直接使用（随 langgraph 传递安装，待清理） | >=0.3 |
 | **ChromaDB** | 向量数据库 | >=0.5 |
 | **Sentence-Transformers** | 文本嵌入 | >=3.0 |
 | **ONNX Runtime** | 文档分类模型 | >=1.17 |
@@ -211,7 +219,7 @@ BidMaster Pro 是基于 AI Agent 架构的全流程智能招投标平台。通�
 ```bash
 # 1. 克隆项目
 git clone <repository-url>
-cd BidMaster-Pro
+cd zhinbiao-pro
 
 # 2. 配置环境变量
 cp .env.example .env
@@ -325,7 +333,20 @@ class MyCustomSkill(Skill):
 
 ### Agent Pipeline (Agent 流水线)
 
-使用 LangGraph 编排多个 Skill 的执行流程：
+运行时编排由**自研多 Agent 框架**完成：模板优先（`bid_generation` 6 步 / `bid_check` 2 步 / `full_analysis` 2 步），每步成功写入检查点以支持断点续跑；失败按固定策略表 `retry / goto / skip`，兜不住再交给 LLM 决策。
+
+```python
+# ① 运行时真正使用的模板（core/agent_framework/supervisor.py）
+PIPELINE_TEMPLATES = {
+    "bid_generation": OrderedDict([
+        ("interpret", _step("tender_interpret_agent", "解读招标文件，提取关键信息", 180)),
+        ("outline",   _step("outline_agent", "基于解读结果生成投标大纲", 120, True)),
+        # ... content / check / format / export
+    ]),
+}
+```
+
+> 另有 `core/agent_engine/orchestrator.py` 提供的 **LangGraph（DSL 动态建图）** 引擎，属预留能力，当前**未接入 HTTP 运行路径**，DSL 形如：
 
 ```python
 pipeline_dsl = {
@@ -354,31 +375,33 @@ if not gate_keeper.is_passed(project_id, "interpret"):
 
 ---
 
-## 💬 联系作者
+## 💬 联系方式
 
-✨ Star 项目
-扫码关注微信公众号，回复 **bidmaster** 即可获取：
-
-- 作者个人微信
-- 招投标行业交流群
-- 最新功能动态与使用技巧
-- 专属技术支持
-
-![微信公众号](packages/desktop/images/wechat-qrcode.png)
-
-> 💡 **操作说明**：star → 打开微信 → 扫一扫 → 关注公众号 → 发送消息 `bidmaster` → 自动回复作者微信及相关信息。
+- **GitHub**：[@Foulereee](https://github.com/Foulereee)
+- **邮箱**：1817558146@qq.com
+- **问题反馈 / 功能建议**：请提 [Issue](https://github.com/Foulereee/zhinbiao-pro/issues)
+- **安全问题**：请勿公开提单，按 [SECURITY.md](SECURITY.md) 私下联系
 
 ---
 
-## 📄 许可证
+## 📄 开源许可
 
-本项目采用 MIT 许可证 - 详见 [LICENSE](LICENSE) 文件
+本仓库以 **GNU Affero General Public License v3.0（AGPL-3.0）** 发布，完整条款见 [LICENSE](LICENSE)。
+
+- 本仓库是 [guangshu100/BidMaster-Pro](https://github.com/guangshu100/BidMaster-Pro) 的**衍生作品**，上游同样以 AGPL-3.0 授权，上游版权归原作者所有；
+- 我的修改内容与日期见 [NOTICE.md](NOTICE.md) 与 [CHANGELOG.md](CHANGELOG.md)；
+- 依据 **AGPL-3.0 第 13 条**，通过网络与本程序交互的用户有权获取对应源代码：源码即本仓库，也可邮件 [1817558146@qq.com](mailto:1817558146@qq.com) 索取；
+- 第三方依赖及其许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)（注意 PyMuPDF 为 AGPL/商业双授权）。
+
+> ⚠️ 上游 README 曾写作 “MIT”，但其 `LICENSE` 文件与 GitHub 识别均为 AGPL-3.0；以实际授权文本为准，本仓库**未采用 MIT**。
 
 ---
 
 <div align="center">
 
-**Made with ❤️ by BidMaster Team**
+**Made with ❤️ by [Foulereee](https://github.com/Foulereee)**
+
+> 本项目基于 [guangshu100/BidMaster-Pro](https://github.com/guangshu100/BidMaster-Pro)（AGPL-3.0）二次开发，感谢原作者。
 
 🚀 全流程智能招投标 Agent · 4 阶段流水线 · 21 项合规检查 · 多 LLM 切换 · Skill 引擎 · RAG 知识库 · MinerU OCR · 商机监控
 

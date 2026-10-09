@@ -3,6 +3,28 @@
 # type: rss / api / crawl
 # weight: 综合权重 (0-1),影响评分
 # enabled: 是否启用,管理员可在 UI 修改
+#
+# ⚠️ 注意：已有源的 enabled 状态以【数据库】为准，YAML 只作为首次建库时的默认值。
+#    在运行中的实例上启停数据源请用 PATCH /api/news/sources/{code} 或界面开关；
+#    改 URL/type/weight 则会由启动同步覆盖到数据库。
+#
+# ─ 2026-09-17 订阅源探测结论 ──
+# 下列源经"抓落地页解析 <link rel="alternate">"确认：站点可访问，但不提供任何
+# RSS/Atom 订阅。无 RSS 就无法被当前抓取层消费（type=crawl 的 HTMLFetcher 目前是空实现），
+# 故置 enabled=false，避免每次聚合都报"N 个源异常"。
+#   ccgp_central / ccgp_local / ccgp_change  中国政府采购网（69KB 首页，无 RSS）
+#   ggzy_national                            全国公共资源交易平台（67KB，无 RSS）
+#   ggzy_sh / ggzy_gd                        上海 / 广东（站点为 JS 渲染）
+#   ggzy_zj                                  域名 www.ggzy.zj.gov.cn DNS 不存在（配置错误）
+#   ggzy_sd                                  旧域名 www.sdggzyjy.gov.cn DNS 不存在；
+#                                            实际站点 ggzyjy.shandong.gov.cn 亦无 RSS
+#   cebpubservice                            中国招标投标公共服务平台（163KB，无 RSS）
+#   chinamobile                              b2b.10086.cn TLS 证书异常
+#   chinaunicom                              中国联通（61KB，无 RSS）
+#   xinzhiyuan                               新智元（55KB，无 RSS）
+#   zhipuai_blog / baichuan_blog / stepfun_blog  官网为 SPA，无静态列表可抓
+#   thebatch                                 DeepLearning.AI（187KB，feed 已下线）
+# 如将来实现真正的 HTML 列表页抓取，可优先恢复：ccgp_*、ggzy_sd、ggzy_national、cebpubservice。
 
 government_procurement:
   - name: "中国政府采购网-中央公告"
@@ -11,7 +33,7 @@ government_procurement:
     url: "http://www.ccgp.gov.cn/cggg/dfgg/rss.xml"
     industry: "04"
     weight: 1.0
-    enabled: true
+    enabled: false  # 站点无 RSS（实测 404）；如需启用请改用 HTML 列表页抓取
     description: "中央国家机关政府采购公告"
   - name: "中国政府采购网-地方公告"
     code: "ccgp_local"
@@ -19,7 +41,7 @@ government_procurement:
     url: "http://www.ccgp.gov.cn/cggg/dfgg/rss_local.xml"
     industry: "04"
     weight: 0.9
-    enabled: true
+    enabled: false  # 站点无 RSS（实测 404）
     description: "地方各级政府采购公告"
   - name: "中国政府采购网-变更公告"
     code: "ccgp_change"
@@ -27,7 +49,7 @@ government_procurement:
     url: "http://www.ccgp.gov.cn/cggg/dfgg/rss_change.xml"
     industry: "04"
     weight: 0.8
-    enabled: true
+    enabled: false  # 站点无 RSS（实测 404）
     description: "采购公告变更/更正信息"
 
 engineering:
@@ -37,7 +59,7 @@ engineering:
     url: "https://www.ggzy.gov.cn/rss.xml"
     industry: "01"
     weight: 1.0
-    enabled: true
+    enabled: false  # 站点无 RSS（实测 404 + 落地页无订阅声明）
     description: "国家级公共资源交易信息"
   - name: "北京市公共资源交易服务平台"
     code: "ggzy_bj"
@@ -49,17 +71,17 @@ engineering:
   - name: "上海市公共资源交易中心"
     code: "ggzy_sh"
     type: "rss"
-    url: "https://www.sggzy.com/rss"
+    url: "https://www.shggzy.com/rss"
     industry: "01"
     weight: 0.9
-    enabled: true
+    enabled: false  # 站点为 JS 渲染，无 RSS（旧域名 www.sggzy.com 亦连不上）
   - name: "广东省公共资源交易中心"
     code: "ggzy_gd"
     type: "rss"
     url: "https://www.gdggzy.com/rss"
     industry: "01"
     weight: 0.9
-    enabled: true
+    enabled: false  # 站点仅返回极简占位页，无 RSS
   - name: "江苏省公共资源交易平台"
     code: "ggzy_js"
     type: "rss"
@@ -73,14 +95,14 @@ engineering:
     url: "https://www.ggzy.zj.gov.cn/rss"
     industry: "01"
     weight: 0.85
-    enabled: true
+    enabled: false  # 域名 DNS 不存在（配置错误），需先更正域名
   - name: "山东省公共资源交易中心"
     code: "ggzy_sd"
     type: "rss"
     url: "https://www.sdggzyjy.gov.cn/rss"
     industry: "01"
     weight: 0.8
-    enabled: true
+    enabled: false  # 旧域名不存在；实际站点 ggzyjy.shandong.gov.cn 无 RSS
 
 tender_service:
   - name: "中国招标投标公共服务平台"
@@ -89,7 +111,7 @@ tender_service:
     url: "https://www.cebpubservice.com/rss.xml"
     industry: "01"
     weight: 1.0
-    enabled: true
+    enabled: false  # 站点无 RSS（实测 404 + 落地页无订阅声明）
     description: "国家级招标投标信息公共服务"
   - name: "比比招标采购网"
     code: "ebidding"
@@ -120,14 +142,14 @@ enterprise_tender:
     url: "https://b2b.10086.cn/b2b/main/rss.html"
     industry: "10"
     weight: 0.9
-    enabled: true
+    enabled: false  # TLS 证书异常，且站点无 RSS
   - name: "中国联通采购与招标网"
     code: "chinaunicom"
     type: "rss"
     url: "https://www.chinaunicom.com.cn/news/rss"
     industry: "10"
     weight: 0.9
-    enabled: true
+    enabled: false  # 站点无 RSS（实测 404 + 落地页无订阅声明）
   - name: "中国电信采购平台"
     code: "chinatelecom"
     type: "crawl"
@@ -200,12 +222,13 @@ general_news:
     url: "https://www.aiust.com/rss"
     industry: "12"
     weight: 0.9
-    enabled: true
+    enabled: false  # 站点无 RSS（实测 /rss /feed /feed.xml 均 404）
     description: "AI 与产业资讯"
   - name: "AI科技评论"
     code: "aitechreview"
     type: "rss"
-    url: "https://www.leiphone.com/category/ai/feed"
+    # 原 /category/ai/feed 返回 500；/feed 可用（实测 20 条）
+    url: "https://www.leiphone.com/feed"
     industry: "12"
     weight: 0.9
     enabled: true
@@ -218,7 +241,7 @@ general_news:
     url: "https://www.zhipuai.cn/blog/rss"
     industry: "12"
     weight: 1.0
-    enabled: true
+    enabled: false  # 官网为 SPA，无 RSS 也无静态列表
   - name: "月之暗面(Kimi)"
     code: "moonshot_blog"
     type: "rss"
@@ -232,14 +255,14 @@ general_news:
     url: "https://www.baichuan-ai.com/blog/rss"
     industry: "12"
     weight: 0.9
-    enabled: true
+    enabled: false  # 官网为 SPA（/blog 亦 404），无 RSS
   - name: "阶跃星辰"
     code: "stepfun_blog"
     type: "rss"
     url: "https://www.stepfun.com/blog/rss"
     industry: "12"
     weight: 0.9
-    enabled: true
+    enabled: false  # 官网为 SPA（/blog 亦 404），无 RSS
 
   # 国外 AI 公司 (来自 ai-content-publisher)
   - name: "OpenAI Blog"
@@ -259,7 +282,8 @@ general_news:
   - name: "Hugging Face Blog"
     code: "hf_blog"
     type: "rss"
-    url: "https://huggingface.co/blog/feed.xml"
+    # huggingface.co 国内不可达（连接失败），改用国内镜像 hf-mirror.com（实测 862 条）
+    url: "https://hf-mirror.com/blog/feed.xml"
     industry: "12"
     weight: 1.0
     enabled: true
@@ -285,7 +309,7 @@ general_news:
     url: "https://www.deeplearning.ai/the-batch/feed/"
     industry: "12"
     weight: 0.9
-    enabled: true
+    enabled: false  # feed 已下线（实测 404），落地页无订阅声明
   - name: "Towards Data Science"
     code: "tds"
     type: "rss"

@@ -5,7 +5,7 @@ import secrets
 import time
 
 import bcrypt
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -65,7 +65,11 @@ def verify_token(token: str) -> dict | None:
 
 
 @router.post("/login")
-async def login(data: LoginRequest, db: AsyncSession = Depends(get_db)):
+async def login(
+    data: LoginRequest,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
     result = await db.execute(select(User).where(User.email == data.email))
     user = result.scalar_one_or_none()
 
@@ -99,6 +103,20 @@ async def login(data: LoginRequest, db: AsyncSession = Depends(get_db)):
             select(RBACRole).where(RBACRole.id.in_(role_ids))
         )
         roles = [{"id": str(r.id), "name": r.name, "display_name": r.display_name} for r in role_result.scalars().all()]
+
+    # 同时写入同源 Cookie：浏览器用 window.open / 直接点链接下载时无法自定义
+    # Authorization 头，只能靠 Cookie 带会话（require_any_auth 已支持 Cookie 校验）。
+    # HttpOnly 防脚本读取；SameSite=Lax 保证从本站点开的新标签会带上。
+    from services.middleware.api_key import SESSION_COOKIE_NAME
+
+    response.set_cookie(
+        SESSION_COOKIE_NAME,
+        token,
+        max_age=SESSION_TTL,
+        httponly=True,
+        samesite="lax",
+        path="/",
+    )
 
     return {
         "token": token,
@@ -144,7 +162,11 @@ async def get_current_user_info(
 
 
 @router.post("/logout")
-async def logout(request: Request, db: AsyncSession = Depends(get_db)):
+async def logout(
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
     from services.middleware.rbac_middleware import get_current_user
     await get_current_user(request, db)
 
@@ -153,6 +175,14 @@ async def logout(request: Request, db: AsyncSession = Depends(get_db)):
         token = auth_header[7:].strip()
         if token and token in _sessions:
             del _sessions[token]
+
+    # 一并注销 Cookie 里的会话
+    from services.middleware.api_key import SESSION_COOKIE_NAME
+
+    cookie_token = request.cookies.get(SESSION_COOKIE_NAME, "")
+    if cookie_token and cookie_token in _sessions:
+        del _sessions[cookie_token]
+    response.delete_cookie(SESSION_COOKIE_NAME, path="/")
     return {"success": True}
 
 

@@ -1,10 +1,31 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { PenTool, Loader2, ListTree, FileText, AlertTriangle, Shield, Play, Download, ChevronRight, ChevronDown, GripVertical, Plus, Trash2, Edit3, Check, X, ImageIcon, Copy, CheckCircle2, Info, Eye, BookOpen, Edit, ArrowRight } from 'lucide-react';
+import { PenTool, Loader2, ListTree, FileText, AlertTriangle, Shield, Play, Download, ChevronRight, ChevronDown, GripVertical, Plus, Trash2, Edit3, Check, X, ImageIcon, Copy, CheckCircle2, Info, Eye, BookOpen, Edit, ArrowRight, RotateCcw } from 'lucide-react';
 import { generateApi, projectApi, interpretApi, aiImageApi, type Project, type OutlineNode, type GateInfo, type SSEController } from '../services/api';
 import { useAppStore } from '../stores/appStore';
 import StepHeader from '../components/common/StepHeader';
 import MarkdownRenderer from '../components/common/MarkdownRenderer';
+
+// 批量生成的目标篇幅快捷档位（字，对应 9-20 版的「N 万字」按钮）；后端按 800 字/页估算页数。
+const TARGET_WORD_OPTIONS = [50000, 80000, 100000, 150000];
+const WORDS_PER_PAGE = 800;
+
+// 字数 → 页数估算（与 9-20 版 wordsToPages 一致：向上取整，0 或负数记 0 页）
+function wordsToPages(words: number): number {
+  return !words || words <= 0 ? 0 : Math.ceil(words / WORDS_PER_PAGE);
+}
+
+// 字数千分位展示（与 9-20 版 formatWords 一致）
+function formatWords(words: number): string {
+  return (words || 0).toLocaleString();
+}
+
+// 章节“待重新生成”判定：与后端 stream-all 的 only_missing 补缺口径保持一致
+// （没内容 / 少于 100 字 / 是失败提示或占位提示）。
+function isChapterMissing(chapter: { content?: string } | null | undefined): boolean {
+  const text = (chapter?.content || '').trim();
+  return text.length < 100 || text.includes('本章正文未能生成') || text.includes('占位提示');
+}
 
 const STRUCTURE_TEMPLATES = [
   {
@@ -124,6 +145,8 @@ export default function GeneratePage() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [batchProgress, setBatchProgress] = useState<{ current: number; total: number; currentTitle: string; completed: Array<{ id: string; title: string; wordCount: number }>; failed: Array<{ id: string; title: string; error: string }>; consistencyCheck?: Record<string, unknown> | null; scoringCoverage?: Record<string, unknown> | null } | null>(null);
   const [isBatchStreaming, setIsBatchStreaming] = useState(false);
+  // 批量生成的目标篇幅（字），传给后端按叶子章节均摊
+  const [targetWords, setTargetWords] = useState<number>(80000);
   const [generatedChapters, setGeneratedChapters] = useState<Array<{ id: string; title: string; content: string; word_count: number; status: string }>>([]);
   const [selectedChapterId, setSelectedChapterId] = useState<string | null>(null);
   const [selectedChapterContent, setSelectedChapterContent] = useState<string>('');
@@ -167,6 +190,8 @@ export default function GeneratePage() {
 
   const outlineCompleted = outlineNodes.length > 0;
   const generateCompleted = generatedChapters.length > 0;
+  // 待重新生成的章节数（与 batchProgress 无关，只看当前已落库的章节内容）
+  const missingChapterCount = generatedChapters.filter((ch) => isChapterMissing(ch)).length;
   const outlineGatePassed = outlineCompleted && outlineReviewConfirmed;
   const generateGatePassed = generateCompleted && generateReviewConfirmed;
 
@@ -629,7 +654,7 @@ export default function GeneratePage() {
     setIsStreaming(false);
   };
 
-  const handleBatchGenerateAll = useCallback((mode: string = 'A') => {
+  const handleBatchGenerateAll = useCallback((mode: string = 'A', onlyMissing: boolean = false) => {
     if (!selectedProjectId) return;
     setIsBatchStreaming(true);
     setBatchProgress({ current: 0, total: 0, currentTitle: '', completed: [], failed: [] });
@@ -669,9 +694,9 @@ export default function GeneratePage() {
         setIsBatchStreaming(false);
         batchStreamRef.current = null;
       },
-    });
+    }, targetWords, 0, onlyMissing);
     batchStreamRef.current = controller as SSEController;
-  }, [selectedProjectId]);
+  }, [selectedProjectId, targetWords]);
 
   const handleStopBatchStream = () => {
     if (batchStreamRef.current) {
@@ -1557,6 +1582,42 @@ export default function GeneratePage() {
             </div>
           </div>
 
+          {/* 对齐评分项模式提示（文案与 9-20 版一致）：列出将逐条对齐的评分项 */}
+          {outlineMode === 'aligned' && (() => {
+            const rows = (((scoringMatrixData?.rows as Array<Record<string, unknown>>) || [])).filter(r => r && (r.item || r.name));
+            const totalScore = (scoringMatrixData?.total_score as number) || rows.reduce((s, r) => s + (Number(r.score) || 0), 0);
+            return (
+              <div style={{ marginBottom: '14px', padding: '12px 14px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                  <Info size={14} color="#2563eb" style={{ flexShrink: 0 }} />
+                  <span style={{ fontSize: '13px', fontWeight: 600, color: '#1e40af' }}>
+                    对齐评分项模式：大纲将按以下 {rows.length} 个评分项逐条对齐{totalScore > 0 ? `（合计 ${totalScore} 分）` : ''}
+                  </span>
+                </div>
+                {rows.length > 0 ? (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                    {rows.map((r, idx) => (
+                      <span key={idx} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', maxWidth: '100%', padding: '3px 8px', background: 'white', border: '1px solid #dbeafe', borderRadius: '12px', fontSize: '12px', color: '#334155' }}>
+                        {r.category ? <span style={{ color: '#2563eb', flexShrink: 0 }}>[{String(r.category)}]</span> : null}
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{String(r.item || r.name || '')}</span>
+                        {r.score !== undefined && r.score !== null && r.score !== '' ? (
+                          <span style={{ color: '#059669', fontWeight: 600, flexShrink: 0 }}>{String(r.score)}分</span>
+                        ) : null}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: '12px', color: '#b45309', lineHeight: 1.7 }}>
+                    还没有评分矩阵，本模式暂时无法对齐到具体评分项。请先到「招标解读 → 评分矩阵」生成评分矩阵，再回到这里生成大纲。
+                  </div>
+                )}
+                <div style={{ fontSize: '11px', color: '#64748b', marginTop: '8px', lineHeight: 1.6 }}>
+                  生成时以上评分项会作为「评分标准」逐条写入提示词，要求一级目录覆盖每一项；如果某评分项已有明确章节名称，目录名称会与之一致。
+                </div>
+              </div>
+            );
+          })()}
+
           {loading && (
             <div style={{ border: '1px solid var(--color-border)', borderRadius: '8px', padding: '20px', minHeight: '300px', position: 'relative', overflow: 'hidden' }}>
               <div style={{ position: 'relative', zIndex: 1 }}>
@@ -1801,14 +1862,98 @@ export default function GeneratePage() {
             </div>
           </div>
 
+          {/* 目标篇幅面板：文案 / 提示 / 说明与 9-20 版一致（字数逻辑未改，仍按 800 字/页 估算） */}
+          {(() => {
+            const generatedWords = generatedChapters.reduce((sum, ch) => sum + (ch.word_count || 0), 0);
+            const generatedPages = wordsToPages(generatedWords);
+            const targetPages = wordsToPages(targetWords);
+            const remainingPages = targetWords > 0 ? Math.max(0, targetPages - generatedPages) : 0;
+            return (
+              <div style={{ marginBottom: '16px', padding: '12px 14px', background: '#f8fafc', border: '1px solid var(--color-border)', borderRadius: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                  <span style={{ fontSize: '13px', fontWeight: 600 }}>目标篇幅</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step={10000}
+                    value={targetWords || ''}
+                    placeholder="留空=按每章自动"
+                    onChange={(e) => setTargetWords(Math.max(0, Number(e.target.value) || 0))}
+                    style={{ width: '150px', padding: '6px 10px', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '13px' }}
+                  />
+                  <span style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>字</span>
+                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                    {TARGET_WORD_OPTIONS.map(w => (
+                      <button
+                        key={w}
+                        onClick={() => setTargetWords(w)}
+                        style={{
+                          padding: '4px 10px',
+                          fontSize: '12px',
+                          borderRadius: '12px',
+                          cursor: 'pointer',
+                          border: targetWords === w ? '1px solid var(--color-primary)' : '1px solid var(--color-border)',
+                          background: targetWords === w ? '#eff6ff' : 'white',
+                          color: targetWords === w ? 'var(--color-primary)' : 'var(--color-text)',
+                        }}
+                      >
+                        {w / 10000} 万字
+                      </button>
+                    ))}
+                    {targetWords > 0 && (
+                      <button
+                        onClick={() => setTargetWords(0)}
+                        style={{ padding: '4px 10px', fontSize: '12px', borderRadius: '12px', cursor: 'pointer', border: '1px solid var(--color-border)', background: 'white', color: 'var(--color-text-secondary)' }}
+                      >
+                        不限
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', lineHeight: 1.8 }}>
+                  {targetWords > 0 ? (
+                    <>
+                      目标 <b style={{ color: '#1e40af' }}>{formatWords(targetWords)} 字</b> ≈ <b style={{ color: '#1e40af' }}>{targetPages} 页</b>（按每页约 {WORDS_PER_PAGE} 字）；实际按大纲的叶子章节均摊，有下级的章节只写一段概述
+                    </>
+                  ) : (
+                    <>不填则按每章自动推断（默认每章 2500 字，技术类章节更多）。填写后全书总字数会按章节均摊，并在提示词中限定上下限。</>
+                  )}
+                  {generatedWords > 0 && (
+                    <div style={{ marginTop: '4px' }}>
+                      已生成 <b style={{ color: '#059669' }}>{generatedChapters.length} 章 · {formatWords(generatedWords)} 字</b> ≈ <b style={{ color: '#059669' }}>{generatedPages} 页</b>
+                      {targetWords > 0 && (generatedPages <= targetPages ? (
+                        <>，还剩约 <b style={{ color: '#d97706' }}>{remainingPages} 页</b> 需生成</>
+                      ) : (
+                        <>，已<b style={{ color: '#dc2626' }}>超出目标约 {generatedPages - targetPages} 页</b>（可缩小目标篇幅后重新生成长章节）</>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+
           <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
             <button
-              onClick={() => { const mode = (document.getElementById('gen-mode-select') as HTMLSelectElement)?.value || 'A'; handleBatchGenerateAll(mode); }}
+              onClick={() => { const mode = (document.getElementById('gen-mode-select') as HTMLSelectElement)?.value || 'A'; handleBatchGenerateAll(mode, false); }}
               disabled={isBatchStreaming || isStreaming || !selectedProjectId || outlineNodes.length === 0}
               style={{ padding: '8px 16px', background: (isBatchStreaming || isStreaming || !selectedProjectId || outlineNodes.length === 0) ? '#94a3b8' : '#059669', color: 'white', border: 'none', borderRadius: '8px', cursor: (isBatchStreaming || isStreaming || !selectedProjectId || outlineNodes.length === 0) ? 'not-allowed' : 'pointer', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}
             >
               <FileText size={14} /> {isBatchStreaming ? `批量生成中(${batchProgress?.current || 0}/${batchProgress?.total || 0})...` : '生成全部正文'}
             </button>
+            {(() => {
+              const regenerateDisabled = isBatchStreaming || isStreaming || !selectedProjectId || outlineNodes.length === 0 || missingChapterCount === 0;
+              return (
+                <button
+                  onClick={() => { const mode = (document.getElementById('gen-mode-select') as HTMLSelectElement)?.value || 'A'; handleBatchGenerateAll(mode, true); }}
+                  disabled={regenerateDisabled}
+                  title={missingChapterCount === 0 ? '当前没有需要重新生成的章节' : `只重跑这 ${missingChapterCount} 个尚未生成/生成失败的章节`}
+                  style={{ padding: '8px 16px', background: regenerateDisabled ? '#94a3b8' : '#d97706', color: 'white', border: 'none', borderRadius: '8px', cursor: regenerateDisabled ? 'not-allowed' : 'pointer', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}
+                >
+                  <RotateCcw size={14} /> 重新生成未加载内容（{missingChapterCount} 章）
+                </button>
+              );
+            })()}
             {isBatchStreaming && (
               <button onClick={handleStopBatchStream} style={{ padding: '8px 16px', background: '#dc2626', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '13px' }}>停止批量生成</button>
             )}
@@ -1922,6 +2067,7 @@ export default function GeneratePage() {
                 <div style={{ width: '280px', minWidth: '280px', borderRight: '1px solid var(--color-border)', overflowY: 'auto', maxHeight: '600px', background: '#fafbfc' }}>
                   {generatedChapters.map((ch) => {
                     const isSelected = selectedChapterId === ch.id;
+                    const isMissing = isChapterMissing(ch);
                     const statusColor = ch.status === 'generated' ? '#059669' : ch.status === 'edited' ? '#2563eb' : ch.status === 'failed' ? '#dc2626' : '#d97706';
                     return (
                       <div key={ch.id} onClick={() => handleViewChapter(ch.id)} style={{ padding: '10px 14px', cursor: 'pointer', borderLeft: isSelected ? '3px solid var(--color-primary)' : '3px solid transparent', background: isSelected ? '#eff6ff' : 'transparent', borderBottom: '1px solid #f1f5f9', transition: 'all 0.15s' }} onMouseEnter={(e) => { if (!isSelected) (e.currentTarget as HTMLDivElement).style.background = '#f0f4f8'; }} onMouseLeave={(e) => { if (!isSelected) (e.currentTarget as HTMLDivElement).style.background = 'transparent'; }}>
@@ -1933,6 +2079,12 @@ export default function GeneratePage() {
                           <span style={{ fontSize: '11px', color: '#64748b' }}>{ch.word_count}字</span>
                           <span style={{ fontSize: '10px', padding: '1px 6px', borderRadius: '3px', background: ch.status === 'generated' ? '#dcfce7' : ch.status === 'edited' ? '#dbeafe' : ch.status === 'failed' ? '#fee2e2' : '#fef3c7', color: ch.status === 'generated' ? '#166534' : ch.status === 'edited' ? '#1e40af' : ch.status === 'failed' ? '#991b1b' : '#92400e' }}>{ch.status === 'generated' ? '已生成' : ch.status === 'edited' ? '已编辑' : ch.status === 'failed' ? '失败' : '待生成'}</span>
                         </div>
+                        {isMissing && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px', paddingLeft: '12px', fontSize: '10px', color: '#c2410c' }}>
+                            <AlertTriangle size={10} color="#ea580c" />
+                            <span style={{ padding: '1px 6px', borderRadius: '3px', background: '#ffedd5', border: '1px solid #fdba74' }}>占位提示/未生成，需重新生成</span>
+                          </div>
+                        )}
                       </div>
                     );
                   })}

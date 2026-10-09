@@ -42,7 +42,11 @@ class DbQueryToolFactory:
         }
 
         async def handler(fields: list[str] | None = None, **kw):
-            ctx: AgentContext = handler._agent_ctx
+            # 上下文按调用点传入（ToolRegistry.execute 注入 _ctx），
+            # 避免多个 Agent 共用同一 handler 时互相覆盖上下文。
+            ctx: AgentContext | None = kw.pop("_ctx", None)
+            if ctx is None:
+                ctx = getattr(handler, "_agent_ctx", None)
             if not ctx or not ctx.db:
                 return {"error": "数据库连接不可用"}
             model = _get_model(defn.model_name)
@@ -59,15 +63,11 @@ class DbQueryToolFactory:
                 return {"error": f"{defn.description}不存在"}
             return defn.result_summarizer(record, fields)
 
-        def ctx_provider(ctx: AgentContext):
-            handler._agent_ctx = ctx
-
         return ToolDef(
             name=defn.tool_name,
             description=defn.description,
             parameters=param_schema,
             handler=handler,
-            ctx_provider=ctx_provider,
         )
 
 

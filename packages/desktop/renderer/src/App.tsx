@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import AppLayout from './components/layout/AppLayout';
 import DashboardPage from './pages/DashboardPage';
@@ -30,6 +31,16 @@ function PublicOnlyRoute({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
+  const appName = useAppStore((s) => s.appConfig.name);
+
+  // 品牌信息固定使用前端源码里的默认值（见 services/api.ts 的 DEFAULT_APP_CONFIG），
+  // 不再在启动时从 /api/app-config/config 拉取覆盖，避免服务端 .env 改掉界面品牌。
+
+  // 浏览器标签页标题跟随配置
+  useEffect(() => {
+    document.title = appName;
+  }, [appName]);
+
   return (
     <Routes>
       <Route path="/login" element={<PublicOnlyRoute><LoginPage /></PublicOnlyRoute>} />
