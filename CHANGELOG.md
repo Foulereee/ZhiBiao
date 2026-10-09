@@ -1,6 +1,6 @@
 # 变更记录
 
-本文件记录本仓库（https://github.com/Foulereee/zhinbiao-pro）相对上游 https://github.com/guangshu100/BidMaster-Pro 的修改，便于下游使用者判断差异。
+本文件记录本仓库（https://github.com/Foulereee/ZhiBiao）相对上游 https://github.com/guangshu100/BidMaster-Pro 的修改，便于下游使用者判断差异。
 
 格式参考 Keep a Changelog；日期为本地时间。
 

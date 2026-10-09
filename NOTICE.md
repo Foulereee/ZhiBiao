@@ -22,7 +22,7 @@
 
 | 项目 | 内容 |
 |---|---|
-| 仓库 | https://github.com/Foulereee/zhinbiao-pro |
+| 仓库 | https://github.com/Foulereee/ZhiBiao |
 | 维护者 | Foulereee <1817558146@qq.com> |
 | 许可 | **GNU Affero General Public License v3.0（AGPL-3.0）**（整体，包含对上游代码的修改部分） |
 

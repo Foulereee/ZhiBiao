@@ -13,8 +13,8 @@
 
 ```bash
 # 1) Fork 本仓库并克隆你的 fork
-git clone https://github.com/<你的用户名>/zhinbiao-pro.git
-cd zhinbiao-pro
+git clone https://github.com/<你的用户名>/ZhiBiao.git
+cd ZhiBiao
 
 # 2) 建分支
 git checkout -b fix/你的改动

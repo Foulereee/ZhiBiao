@@ -1,11 +1,12 @@
-# 智标 - 全流程智能招投标平台
+# ZhiBiao（智标）— 全流程智能招投标平台
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)
+![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.12+-green.svg)
 ![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)
 ![Based on](https://img.shields.io/badge/based%20on-guangshu100%2FBidMaster--Pro-lightgrey.svg)
+![Form](https://img.shields.io/badge/%E8%BF%90%E8%A1%8C%E5%BD%A2%E6%80%81-%E7%BA%AF%20B%2FS-blueviolet.svg)
 
 **AI 智能招投标助手 · 标书生成 · 投标生成 · 投标检查 · 文档排版 全流程自动化**
 
@@ -22,6 +23,47 @@
 > 💡 **部署形态**：默认 **纯 B/S（浏览器访问）** —— 服务端 nginx 站点 + API，用户端只需浏览器，无需安装任何客户端。
 
 > 本项目基于 [guangshu100/BidMaster-Pro](https://github.com/guangshu100/BidMaster-Pro)（AGPL-3.0）二次开发，感谢原作者；修改说明见 [NOTICE.md](NOTICE.md)。
+>
+> **运行形态：纯 B/S（浏览器访问）** —— 用户侧无需安装任何客户端。
+
+---
+
+## 🆕 本仓库重点改进（相对上游）
+
+> 不是简单拷贝：运行形态统一为**纯 B/S（浏览器访问）**，并修复了导出、鉴权、字体、任务链路等影响实际可用性的问题。
+> 相对上游的完整差异见 [CHANGELOG.md](CHANGELOG.md)，来源与署名见 [NOTICE.md](NOTICE.md)。
+
+### 🔧 重点修复
+
+| 问题 | 本仓库的修复 |
+| --- | --- |
+| **导出 Word 时 Markdown 标记直接出现在正文** | 修正 Markdown → Word 渲染路径，标题 / 粗体 / 列表 / 表格按 Word 样式输出 |
+| **导出件封面、页脚缺失或页码错乱** | 补齐封面页与页脚页码，导出前重建分节属性，成果可直接交付 |
+| **缺字体导致排版走样（换机器就跑版）** | 新增 `services/format/font_utils.py`，统一字体解析与回退（正文宋体 / 标题黑体） |
+| **部分接口缺少鉴权，存在越权风险** | 为相关路由补齐认证依赖与 RBAC 校验，未登录不可访问 |
+| **LLM 参数被中间层吞掉、报错不可见** | 网关改为 `openai.AsyncOpenAI` 直连兼容端点（不经 litellm 转发），超时与重试可控 |
+| **“执行检查中”长时间无响应** | 修正检查类 Skill 的超时与并发行为，长任务进度实时回传 |
+| **Agent 工具注册与上下文绑定异常** | 修复 `core/agent_framework/` 的工具注册、上下文绑定与数据库查询工具 |
+| **改配置把 `.env` 注释全冲掉** | 新增 `core/env_store.py`：无损改写 `.env`（保留注释、分组与顺序） |
+| **容器启动不稳定** | 修正 `Dockerfile.api`、`docker-compose.yml`、`entrypoint.sh`、`nginx.conf` |
+
+### ✨ 新增能力
+
+| 新功能 | 说明 |
+| --- | --- |
+| **纯 B/S 部署形态** | 前端构建产物由 nginx 托管、`/api` 反代到后端；浏览器打开即用，用户侧零安装（见下方架构图） |
+| **品牌与参数在线配置** | `GET/PUT /api/app-config`：平台名称、Logo、端口等写入 `.env` 即时生效，无需手改文件 |
+| **一键迁移工具链** | `deploy/`：`export_all.sh` / `import_all.sh` / `rebuild_and_verify.sh` / `seed_admin.py`，换主机时数据、上传件与站点配置一起搬 |
+| **部署手册与迁移方案** | `deploy/` 内附带《全新主机部署手册》《部署迁移方案》，新机器照抄即可 |
+| **开源合规文件** | `NOTICE.md` / `CHANGELOG.md` / `CONTRIBUTING.md` / `SECURITY.md` / `THIRD_PARTY_NOTICES.md` |
+
+### 🧪 实机截图（修复证据）
+
+| 导出 Markdown：修复前 / 修复后 | 投标检查：21 项检查 + 逐项整改方案 |
+| :---: | :---: |
+| ![导出 Markdown 修复前后对比](assets/screenshots/智标2.0_导出Markdown修复_前后对比.png) | ![投标检查修复方案](assets/screenshots/智标2.0_投标检查_修复方案.png) |
+
+> 左图：修复前 Word 正文里直接出现 `##`、`**` 等 Markdown 标记；右图：修复后按 Word 样式渲染，并可生成逐项整改方案。
 
 ---
 
@@ -40,18 +82,17 @@
 
 ## 📸 界面预览
 
+> 以下截图取自本仓库实际运行的系统，均为**浏览器端（B/S）**界面。
 
-| 页面 | 预览 |
-| :--- | :---: |
-| **工作台** | ![工作台](packages/desktop/images/工作台.png) |
-| **招标解读** | ![招标解读](packages/desktop/images/招标解读.png) |
-| **投标生成 - 结构模板** | ![投标生成-结构模板](packages/desktop/images/投标生成-结构模板.png) |
-| **投标生成 - 正文生成** | ![投标生成-正文生成](packages/desktop/images/投标生成-正文生成.png) |
-| **投标检查 - 项目模式** | ![投标检查-项目](packages/desktop/images/投标检查-项目.png) |
-| **投标检查 - 上传文件模式** | ![投标检查-上传](packages/desktop/images/投标检查-上传.png) |
-| **文档输出** | ![文档排版](packages/desktop/images/文档排版.png) |
-| **文档输出（无正文）** | ![文档排版-无](packages/desktop/images/文档排版-无.png) |
-| **咨询中心** | ![咨询中心](packages/desktop/images/咨询中心.png) |
+| 页面 | 截图 | 页面 | 截图 |
+| :---: | :---: | :---: | :---: |
+| **登录页** | ![登录页](assets/screenshots/01_登录页.png) | **工作台** | ![工作台](assets/screenshots/02_工作台.png) |
+| **招标解读** | ![招标解读](assets/screenshots/03_招标解读.png) | **投标生成 - 结构模板** | ![投标生成-结构模板](assets/screenshots/04_投标生成_结构模板.png) |
+| **投标生成 - 大纲编辑** | ![投标生成-大纲编辑](assets/screenshots/05_投标生成_大纲编辑.png) | **投标生成 - 正文生成** | ![投标生成-正文生成](assets/screenshots/06_投标生成_正文生成.png) |
+| **投标检查** | ![投标检查](assets/screenshots/07_投标检查.png) | **文档输出** | ![文档输出](assets/screenshots/08_文档输出.png) |
+| **资讯中心** | ![资讯中心](assets/screenshots/09_资讯中心.png) | **平台设置 - 智能体模型** | ![智能体模型](assets/screenshots/10_平台设置_智能体模型.png) |
+| **平台设置 - LLM 供应商** | ![LLM 供应商](assets/screenshots/11_平台设置_LLM供应商.png) | **平台设置 - MinerU OCR** | ![MinerU OCR](assets/screenshots/12_平台设置_MinerU_OCR.png) |
+| **平台设置 - 权限管理** | ![权限管理](assets/screenshots/13_平台设置_权限管理.png) | **平台设置 - Skill 管理** | ![Skill 管理](assets/screenshots/14_平台设置_Skill管理.png) |
 
 ---
 
@@ -118,41 +159,26 @@
 
 ## 🏗️ 技术架构
 
-### 系统架构图
+### 纯 B/S 总体架构
 
-```
-┌─────────────────────────────────────────────────────┐
-│                  Desktop Client                      │
-│         React + Electron + TypeScript                │
-└──────────────────┬──────────────────────────────────┘
-                   │ REST API
-┌──────────────────▼──────────────────────────────────┐
-│                 FastAPI Server                       │
-│              (Python 3.12+)                          │
-├─────────────────────────────────────────────────────┤
-│  Router Layer                                        │
-│  ├── Projects  ├── Interpret  ├── Generate          │
-│  ├── Check     ├── Format     ├── Skills            │
-│  ├── News      ├── Knowledge  ├── RBAC              │
-│  └── AI-Image                                       │
-├─────────────────────────────────────────────────────┤
-│  Core Engines                                        │
-│  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐│
-│  │ Agent Engine │ │ Skill Engine │ │  RAG Engine  ││
-│  │  Supervisor  │ │  Plugin Sys  │ │  ChromaDB    ││
-│  └──────────────┘ └──────────────┘ └──────────────┘│
-│  ┌──────────────┐ ┌──────────────┐                  │
-│  │  LLM Gateway │ │ Doc Engine   │                  │
-│  │ OpenAI SDK   │ │ Multi-Parser │                  │
-│  └──────────────┘ └──────────────┘                  │
-├─────────────────────────────────────────────────────┤
-│  Infrastructure                                      │
-│  ├── PostgreSQL (AsyncPG)                           │
-│  ├── Redis (Celery Broker)                          │
-│  ├── MinIO (Object Storage)                         │
-│  └── Celery Worker (Async Tasks)                    │
-└─────────────────────────────────────────────────────┘
-```
+![ZhiBiao 纯 B/S 总体架构](assets/diagrams/zhibiao-architecture.png)
+
+| 层 | 组成 | 对外暴露 |
+| --- | --- | --- |
+| ① 用户侧 | 浏览器（Chrome / Edge / 手机）；可选 Electron 桌面端走同一套 HTTP API | — |
+| ② 接入层 | nginx 站点容器：`80`（主入口）/ `3000`（备用），托管前端 dist 并反代 `/api` | **仅 80 / 3000** |
+| ③ 应用层 | FastAPI（`api:8000`）、Celery worker + beat、Redis（broker + cache） | 仅容器网络内部 |
+| ④ 数据层 | PostgreSQL 16、ChromaDB 向量库、Uploads / MinIO 卷 | 仅 `127.0.0.1` |
+| 外部服务 | LLM / Embedding / MinerU OCR（HTTPS 出网，可替换为本地模型） | 出网 |
+
+### 一次「生成标书」的完整链路
+
+![一次生成标书的完整链路](assets/diagrams/zhibiao-request-flow.png)
+
+- **用户侧零安装**：换电脑、换手机、刷新页面都是同一个地址；
+- **前后端可独立重启**：页面打不开看站点容器（80）；页面正常但接口 502，看 `api`（8000）；
+- **长任务不阻塞浏览器**：生成 / 检查交给 Celery，进度通过 SSE 实时回传，可停止后断点续跑；
+- **桌面端可选**：Electron 只是同一套 API 的另一个外壳，服务器不需要为它做任何配置。
 
 ### 核心技术栈
 
@@ -218,8 +244,8 @@
 
 ```bash
 # 1. 克隆项目
-git clone <repository-url>
-cd zhinbiao-pro
+git clone https://github.com/Foulereee/ZhiBiao.git
+cd ZhiBiao
 
 # 2. 配置环境变量
 cp .env.example .env
@@ -227,10 +253,15 @@ cp .env.example .env
 
 # 3. 启动服务
 docker-compose up -d
+
+# 4. 构建前端（B/S：浏览器访问，不需要装桌面端）
+cd packages/desktop && npm install && npm run build   # 产物：packages/desktop/dist
+# 把 dist/ 交给 nginx 托管（/api 反代到 api:8000），或使用 deploy/ 中的站点还原脚本
 ```
 
 启动后自动运行：PostgreSQL (5432) / Redis (6379) / MinIO (9000) / FastAPI (8000) / Celery Worker
 
+- **B/S 网站入口**: `http://<主机IP>/`（nginx 站点，默认 80 端口）
 - API 文档: http://localhost:8000/docs
 - MinIO 控制台: http://localhost:9001
 
@@ -262,8 +293,11 @@ uvicorn services.main:app --reload --host 0.0.0.0 --port 8000
 # 启动 Celery Worker
 celery -A services.celery_app worker --loglevel=info
 
-# 启动前端桌面应用
+# 启动前端（B/S：浏览器访问 http://localhost:5173）
 cd packages/desktop
+npm run dev
+
+# 如需桌面端外壳（可选，走同一套 API）
 npm run electron:dev
 ```
 
@@ -300,7 +334,7 @@ npm run electron:dev
 
 ### LLM 提供商支持
 
-通过 LiteLLM 支持多种 LLM 提供商，可在平台设置中灵活切换：
+通过 LLM 网关（`openai.AsyncOpenAI` 直连 OpenAI 兼容端点）支持多种 LLM 提供商，可在平台设置中灵活切换：
 
 - **DeepSeek**: `deepseek/deepseek-chat`
 - **硅基流动**: `siliconflow/*`
@@ -379,7 +413,7 @@ if not gate_keeper.is_passed(project_id, "interpret"):
 
 - **GitHub**：[@Foulereee](https://github.com/Foulereee)
 - **邮箱**：1817558146@qq.com
-- **问题反馈 / 功能建议**：请提 [Issue](https://github.com/Foulereee/zhinbiao-pro/issues)
+- **问题反馈 / 功能建议**：请提 [Issue](https://github.com/Foulereee/ZhiBiao/issues)
 - **安全问题**：请勿公开提单，按 [SECURITY.md](SECURITY.md) 私下联系
 
 ---
