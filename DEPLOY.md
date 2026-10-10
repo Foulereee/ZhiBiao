@@ -6,6 +6,8 @@
 - **方式二 · 本地开发**：不用 Docker（或只把基础设施放 Docker），自己起 uvicorn + vite。
 
 > 遇到报错先翻 [§6 常见报错对照表](#6-常见报错对照表)，两个最常见的问题（`no configuration file provided` / `does not appear to be a Python project`）都在里面。
+>
+> **Windows 用户可以先试一键脚本**：`.\install.ps1`（自动判断 Docker / 本地，说明见 [§9](#9-一键脚本windows)；停服务用 `.\stop.ps1`）。
 
 ---
 
@@ -47,7 +49,7 @@ cd D:\ZhiBiao-main\ZhiBiao-main      # 进到含 pyproject.toml 的那一层
 | `services/` | 后端：各业务域 router + check/format/generate 等 Skill | uvicorn |
 | `core/` | 引擎层：LLM 网关、OCR、检索、Agent 框架、`settings.py`（读 `.env`） | 后端 |
 | `packages/desktop/` | 前端（React + Vite，另含 Electron 外壳） | npm / nginx |
-| `db/init_pg.sql` | PostgreSQL 基础表（11 张），**postgres 容器首次启动自动执行** | postgres 容器 |
+| `db/init_pg.sql` | PostgreSQL 基础表 + 默认角色/权限/Agent 数据，**postgres 容器首次启动自动执行**（幂等，可重复导入） | postgres 容器 |
 | `db/init_mysql.sql` | MySQL 版本，仅 `--profile mysql` 时用 | mysql 容器 |
 | `docker/docker-compose.yml` | 全部编排（**在 docker/ 目录下**，不在仓库根） | docker compose |
 | `docker/Dockerfile.api` / `Dockerfile.web` | 后端镜像 / 前端构建+nginx 镜像 | docker compose |
@@ -196,8 +198,8 @@ docker compose -f docker/docker-compose.yml --profile infra up -d postgres redis
 
 # 4) 建库 + 建表
 createdb -U postgres bidmaster                    # 或： psql -U postgres -c "CREATE DATABASE bidmaster;"
-psql -U postgres -d bidmaster -f db/init_pg.sql   # 11 张基础表
-# 其余表由应用启动时 init_db() → Base.metadata.create_all 自动补齐（实测共 22 张）
+psql -U postgres -d bidmaster -f db/init_pg.sql   # 基础表 + 默认角色/权限/Agent（幂等）
+# 其余表由 init_db() → Base.metadata.create_all 补齐（实测共 22 张）
 # ⚠️ 不要用 alembic upgrade head：alembic.ini 指向 db/migrations，而仓库里没有这个目录
 
 # 5) 配置：.env 放在"启动命令所在目录"（pydantic 的 env_file=".env" 是相对 CWD 的）
@@ -304,11 +306,14 @@ npm run build       # 产物：packages/desktop/dist
 | `no configuration file provided: not found` | 在仓库根目录跑 compose，而编排文件在 `docker/` | 加 `-f docker/docker-compose.yml` |
 | `unknown docker command: "compose \"` | 复制了 bash 的 `\` 续行；PowerShell 不认 `\`，它被当成参数传给 docker | 命令写在一行，或用反引号 `` ` `` 续行 |
 | `failed to connect to the docker API at npipe:////./pipe/docker_engine ... is the daemon running?` | Docker Desktop 没启动（CLI 装了也一样） | 启动 Docker Desktop，等托盘图标就绪再执行 |
+| `Error response from daemon: Docker Desktop is unable to start` | 本机未启用 WSL2 / Hyper-V（`wsl --status` 报未安装、`HypervisorPresent=False`） | 管理员 PowerShell 执行 `wsl --install`（或在「启用或关闭 Windows 功能」里勾选 **虚拟机平台 + 适用于 Linux 的 Windows 子系统**，专业版也可用 Hyper-V），**重启**后再启动 Docker Desktop |
 | `ERROR: file:///D:/ZhiBiao-main does not appear to be a Python project: neither 'setup.py' nor 'pyproject.toml' found` | 当前目录不是仓库根目录（ZIP 解压多套一层） | `cd` 到含 `pyproject.toml` 的那层，见 [§0](#0-先确认仓库根目录) |
 | 根目录出现一个名为 `.env` 的**文件夹** | 挂载 `../.env` 时源文件不存在，Docker 自动建了目录 | 停容器 → 删该目录 → `Copy-Item .env.example .env` → 重启 |
 | `port is already allocated` / 8080 起不来 | 端口被占 | 改 `WEB_PORT` / `API_PORT` / `POSTGRES_PORT` |
 | 反复被登出、随机 401 | `UVICORN_WORKERS` > 1（会话在进程内） | 保持为 `1` |
 | `alembic upgrade head` 报 `Path doesn't exist: db\migrations` | 仓库没有迁移目录 | 用 `psql -f db/init_pg.sql`，其余表由启动时 `create_all` 建 |
+| `psql -f db/init_pg.sql` 刷出一堆 `relation "projects"/"documents" does not exist` | **老版本 `init_pg.sql` 的缺陷**：`projects.tender_doc_id → documents(id)` 与 `documents.project_id → projects(id)` 互相引用，两张表都建不出来，后续 74 条语句级联报错 | 用本仓库当前的 `db/init_pg.sql`（已改为末尾补外键，空库导入 0 报错）；若用的是旧副本，这些报错**可以忽略**——启动 API 时 `init_db()` 会建全 22 张表 |
+| `psql -f db/init_pg.sql` 报 `value too long for type character varying(36)` | **老版本 `init_pg.sql` 的缺陷**：角色-权限绑定用 `'前缀' \|\| p.code` 拼 `id`，最长的超过 36 字符 → 整条 `INSERT ... SELECT` 回滚，RBAC 绑定一行都写不进去 | 用本仓库当前的 `db/init_pg.sql`（改用 `uuid_generate_v4()::text`，实测 72 行绑定且可重复导入）；旧副本可忽略该报错——应用启动时 `rbac.py` 会自行补齐 |
 | api 容器长时间 `unhealthy` | 首次启动要等 DB + 首次构建慢 | `logs -f api` 看进度；健康检查有 90s 宽限 |
 | PowerShell 无法激活 venv（禁止运行脚本） | 执行策略限制 | `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` |
 | 前端 5173 打不开 | dev 端口是 **15168**（`vite.config.ts` 写死） | 访问 `http://localhost:15168/` |
@@ -325,16 +330,24 @@ Windows 11 + Python 3.14.2 + Node 24.12.0 + PostgreSQL 16，全新空目录 + �
 | 环节 | 结果 |
 | --- | --- |
 | `pip install -e .` | ✅ 218 个包成功 |
-| 数据库 | ✅ `init_pg.sql` 11 张表 → 启动后 `create_all` 补齐 22 张 |
+| 数据库 | ✅ 空库导入 `db/init_pg.sql` **0 报错**（循环外键 + RBAC ID 超长两处缺陷已修）：17 张表、72 行角色-权限绑定、管理员已绑 admin 角色；再执行 `init_db()` 补到 **22 张表**，重复导入仍 0 报错且行数不变 |
 | API | ✅ `/api/health` 200（`db_ready:true`）、`/api/stats` 200（46 个 Skill）、`/openapi.json` 200 |
 | 鉴权 | ✅ 登录返回 64 位 token；带 token 200，不带 token 全 401 |
 | 业务写入 | ✅ 建项目 → 回读 → 删除 |
 | `seed_admin.py` | ✅ 27 权限 / 4 角色 / 管理员 |
 | 前端 | ✅ `npm run build` 16.4s 通过；`npm run dev` 起在 15168 |
 | Celery | ✅ worker `celery@R ready.`，注册 3 个任务 |
+| `install.ps1` 一键脚本 | ✅ 干净副本 + Windows PowerShell 5.1：依赖 → 起便携 PG → 建库 → `init_pg.sql` **0 报错** → `init_db()` **22 张表** → 建管理员 → API 与前端就绪；`stop.ps1` 释放 8000/15168 |
 
-方式一未能在本机实机验证（验证机没有 Docker），改做静态校验：compose 解析通过（9 个服务）、
-所有构建上下文与挂载源存在、变量全部有默认值；线上正是这套 compose 在跑（HTTP 200）。
+方式一未能在本机跑通：验证机装了 Docker Desktop（CLI 29.8.2 / compose v5.5.1），
+`docker compose -f docker/docker-compose.yml --env-file docker/.env.docker.example config --quiet` **校验通过（exit 0）**，
+但本机 **WSL2 未安装**（`wsl --status` 报未安装）且 `HypervisorPresent=False`，Docker 引擎起不来：
+
+```
+Error response from daemon: Docker Desktop is unable to start
+```
+
+启用 WSL2/Hyper-V 并重启后即可实机验证；线上生产正是这套 compose 在跑（HTTP 200），可作为长期运行证据。
 
 ---
 
@@ -346,3 +359,68 @@ Windows 11 + Python 3.14.2 + Node 24.12.0 + PostgreSQL 16，全新空目录 + �
 4. `/api/projects` 这类以 `/` 结尾的路由会 307 跳转，客户端需带尾斜杠。
 5. `core/agent_engine/`（LangGraph）为预留能力，未接入运行路径。
 6. 导出 PDF 若在缺少中文字体的环境运行，字体会被替换（交付 docx 或用装了字体的镜像）。
+
+---
+
+## 9. 一键脚本（Windows）
+
+仓库根目录自带两个 PowerShell 脚本（**无需管理员权限**）：
+
+| 脚本 | 作用 |
+| --- | --- |
+| `install.ps1` | 一键安装/部署：目录校验 → 后端/前端依赖 → 数据库 → 建库建表 → 生成 `.env` → 建管理员 → 起服务 → 健康检查 |
+| `stop.ps1` | 停本地服务（按端口定位进程）；`-Docker` 停容器；`-WithPg` 连便携 PostgreSQL 一起停 |
+
+### 9.1 最简用法
+
+```powershell
+cd <仓库根目录>          # 含 pyproject.toml 的那一层
+.\install.ps1            # 自动判断：Docker 引擎可用就走方式一，否则走方式二
+.\stop.ps1               # 停掉本地方式二启动的 API 与前端
+```
+
+### 9.2 常用参数
+
+| 参数 | 默认 | 说明 |
+| --- | --- | --- |
+| `-Mode auto\|docker\|local` | `auto` | 强制走哪条路；`auto` 下 Docker 不可用会自动回落本地 |
+| `-LlmApiKey` / `-LlmApiBase` | 空 | 写入 `.env`（本地）或 `docker/.env.docker`（Docker）；不传则交互式询问 |
+| `-AdminEmail` / `-AdminPassword` | `admin@bidmaster.pro` / 随机 | 交给 `deploy/seed_admin.py`；不给密码则打印一次随机密码 |
+| `-DbName` / `-PgUser` / `-PgPassword` / `-PgPort` | `bidmaster` / `postgres` / `postgres` / `5432` | 本地模式建库用 |
+| `-ApiPort` / `-SitePort` / `-DevPort` | `8000` / `8080` / `15168` | API / Docker 站点 / vite dev 端口 |
+| `-PgRoot` | 空 | 便携 PostgreSQL 根目录（含 `extracted\pgsql\bin` 与 `data`）；不传则用 `<仓库>\.pgsql` |
+| `-SkipFrontend` | 关 | 不装前端依赖 |
+| `-NoStart` | 关 | 只准备环境，不启动服务 |
+| `-Force` | 关 | 重建已存在的 `.env` / `docker\.env.docker`（会先备份） |
+| `-Yes` | 关 | 非交互（不询问 API Key） |
+
+### 9.3 它做了什么（对应上面的手工步骤）
+
+**方式二（本地）**：检查 Python 版本 → `venv` + `pip install -e .` → `npm install` →
+检查/启动 PostgreSQL（依次找 `<仓库>\.pgsql`、`-PgRoot`、PATH 里的 `pg_ctl`；都没有就给出三种获取方式）→
+建库 + 导入 `db/init_pg.sql`（幂等，容忍其中循环外键相关的报错）→ 执行 `init_db()` 补全 **22 张表** →
+生成 `.env`（UTF-8 **无 BOM**，避免 pydantic 把 BOM 当进第一个键名）→
+`deploy/seed_admin.py` 建管理员 → 后台启动 uvicorn 与 `npm run dev` → 轮询 `/api/health` 与首页。
+
+**方式一（Docker）**：`docker info` 探活（失败会说明 Docker Desktop / WSL2-Hyper-V 的原因）→
+生成根 `.env` 与 `docker\.env.docker` → 一条
+`docker compose -f docker/docker-compose.yml --env-file docker/.env.docker --profile infra --profile web up -d --build`
+→ 等待 `/api/health`（最多 8 分钟）→ 容器内执行 `seed_admin.py` → 打印站点与 API 地址。
+
+### 9.4 日志与停止
+
+```
+logs\install-<时间戳>.log        脚本全过程
+logs\api.out.log / api.err.log   本地后端
+logs\web.out.log / web.err.log   本地前端
+logs\postgres.log                便携 PostgreSQL（由 pg_ctl 启动时）
+```
+
+```powershell
+.\stop.ps1                  # 停 API + 前端
+.\stop.ps1 -WithPg          # 再停便携 PostgreSQL
+.\stop.ps1 -Docker          # Docker：compose stop（容器与数据卷都保留）
+.\stop.ps1 -Docker -Remove  # Docker：删容器与网络（数据卷仍保留；再加 -Volumes 才会删数据）
+```
+
+> Docker Desktop 未启用 WSL2/Hyper-V 时，`install.ps1 -Mode auto` 会自动改为本地模式，不会卡在半路。

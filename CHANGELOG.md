@@ -126,3 +126,48 @@
 ### Changed（调整）
 
 - README「环境要求」改为方式一/方式二对照表，明确哪些组件只是其中一条路需要。
+
+## [1.0.3] - 2026-10-10
+
+新增 Windows 一键安装脚本，并把"照抄文档仍会踩到的坑"一并堵上。
+
+### Added（新增）
+
+- **`install.ps1`：一键安装/部署（Windows PowerShell，无需管理员权限）**
+  - 自动判断：`docker info` 可用则走方式一（Docker 全量），否则走方式二（本地开发）；每步都有
+    `[OK]/[..]/[!]/[X]` 状态，全过程日志落 `logs\install-<时间戳>.log`。
+  - 方式二：校验 Python≥3.12 → `venv` + `pip install -e .` → `npm install` → 检查/启动 PostgreSQL
+    （依次找 `<仓库>\.pgsql`、`-PgRoot`、PATH 里的 `pg_ctl`）→ 建库 + 导入 `db/init_pg.sql` →
+    生成 `.env` → `deploy/seed_admin.py` 建管理员 → 后台启动 uvicorn 与 vite → 轮询 `/api/health` 与首页。
+  - 方式一：生成根 `.env` 与 `docker\.env.docker` → 一条
+    `docker compose -f docker/docker-compose.yml --env-file docker/.env.docker --profile infra --profile web up -d --build`
+    → 等健康检查（最多 8 分钟）→ 容器内执行 `seed_admin.py`。
+  - **幂等**：可重复执行；已存在的 `.env` / `docker\.env.docker` 默认保留，`-Force` 才重建（会先备份）。
+  - 生成的 `.env` 以 **UTF-8 无 BOM** 写入：PowerShell 5.1 的 `Set-Content -Encoding UTF8` 会写 BOM，
+    而 pydantic 会把 BOM 算进第一个键名，导致整份配置失效。
+  - 端口、库名、管理员、Key 均可用参数覆盖，详见 `DEPLOY.md` §9。
+- **`stop.ps1`**：按端口停本地 API 与前端；`-WithPg` 连便携 PostgreSQL 一起停；
+  `-Docker` 走 compose stop，`-Docker -Remove` 删容器与网络（数据卷默认保留，加 `-Volumes` 才删）。
+- `DEPLOY.md` 新增 §9「一键脚本（Windows）」；README 新增「⚡ 一键安装」小节。
+
+### Fixed（修复）
+
+- **`.gitignore`**：补 `logs/`。
+- **`.gitattributes`**：补 `*.ps1 text eol=crlf`（Windows PowerShell 对 LF 行尾的 `.ps1` 兼容性差）。
+- 脚本会明确说出 Docker 引擎不可用的原因（Docker Desktop 未启动 / 未启用 WSL2-Hyper-V）。
+  本机实测：`wsl --status` 报未安装、`HypervisorPresent=False` →
+  `Error response from daemon: Docker Desktop is unable to start`；此时 `-Mode auto` 会自动回落本地模式。
+- **`db/init_pg.sql`：修掉 `projects` ↔ `documents` 的循环外键**
+  - 原文件在 `projects` 里内联 `tender_doc_id ... REFERENCES documents(id)`，而 `documents` 又内联
+    `project_id ... REFERENCES projects(id)`——两表互相引用，空库上**两张表都建不出来**，紧随其后的
+    74 条 `COMMENT` / `CREATE INDEX` 级联报 `relation "projects"/"documents" does not exist`。
+  - 改为"先建表、两表就绪后用幂等 `DO` 块补 `fk_projects_tender_doc`"。
+  - 实测：空库导入 `init_pg.sql` **0 报错**，再执行 `init_db()`（`Base.metadata.create_all`）共 **22 张表**，
+    与生产库一致。`install.ps1` 同步改为"容错导入 → `init_db()` 补全 → 表数自检"。- **`db/init_pg.sql`：修掉 RBAC 角色-权限绑定的 `value too long`**
+  - 4 条 `INSERT INTO rbac_role_permissions ... SELECT '前缀' || p.code, ...` 拼出的 `id` 最长 40+ 字符，
+    超过 `id VARCHAR(36)` → PostgreSQL 报 `value too long for type character varying(36)`，
+    **整条 `INSERT ... SELECT` 整体回滚**，角色-权限绑定一行都写不进去（实测 0 行）。
+  - 改用 `uuid_generate_v4()::text`（固定 36 字符），幂等性仍由 `ON CONFLICT (role_id, permission_id) DO NOTHING` 保证。
+  - 实测（全新空库）：导入 `init_pg.sql` **0 报错**、17 张表、72 行绑定
+    （admin 27 / project_manager 25 / writer 13 / reviewer 7）、管理员已绑定 admin 角色；
+    **重复导入仍 0 报错且行数不变**；再执行 `init_db()` 共 22 张表。

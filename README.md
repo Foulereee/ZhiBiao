@@ -44,6 +44,7 @@
 | **新主机按示例部署后随机退出登录 / 401** | 登录会话保存在进程内字典，而示例配置给的是 `--workers 2`：多进程间会话不共享。已把 `docker/.env.docker.example` 固定为 `UVICORN_WORKERS=1` 并写明原因（生产实际也是 1） |
 | **Windows 下 `start-postgres.bat` / `stop-postgres.bat` 无法执行** | 这两个批处理原本是 LF 行尾，cmd 会逐行报"不是内部或外部命令"。已在 `.gitattributes` 固定 `*.bat text eol=crlf` |
 | **`alembic upgrade head` 在全新克隆上必然失败** | 仓库内确实没有 `db/migrations`（`alembic.ini` 指向它）。文档改为 `psql -f db/init_pg.sql`，并说明启动时 `init_db()` 会 `create_all` 补齐其余表（实测 22 张） |
+| **`db/init_pg.sql` 的角色-权限绑定一条都写不进去** | 4 条 `INSERT ... SELECT` 用 `'前缀' \|\| p.code` 拼 `id`，最长的拼到 40+ 字符，超过 `VARCHAR(36)` → PostgreSQL 报 `value too long`，**整条 INSERT 整体失败**（实测绑定 0 行）。改用 `uuid_generate_v4()::text`（固定 36 字符），幂等性仍由 `ON CONFLICT (role_id, permission_id)` 保证：实测 **72 行**绑定（admin 27 / 项目经理 25 / 撰写 13 / 审核 7），重复导入行数不变 |
 | **资讯中心抓取接口 500** | `services/news/fetchers.py` 直接 import 的 `feedparser` 没写进 `pyproject.toml`，已补齐（并补 `redis` / `minio` 等隐式依赖） |
 | **部分接口缺少鉴权，存在越权风险** | 为相关路由补齐认证依赖与 RBAC 校验，未登录不可访问（实测无 token 全部 401） |
 | **LLM 参数被中间层吞掉、报错不可见** | 网关改为 `openai.AsyncOpenAI` 直连兼容端点（不经 litellm 转发），超时与重试可控 |
@@ -280,6 +281,25 @@ python tools/font_normalize_evidence.py ./out       # 连同样例 docx 一起�
 
 > 逐步命令、环境变量表、目录地图、首次登录与报错排查见 **[DEPLOY.md](DEPLOY.md)**。
 
+### ⚡ 一键安装（Windows，建议先试这个）
+
+仓库自带 PowerShell 脚本，**自动判断**该走 Docker 还是本地开发，并把「装依赖 → 起数据库 → 建库建表 → 建管理员 → 起服务 → 健康检查」一次做完：
+
+```powershell
+cd <仓库根目录>          # 含 pyproject.toml 的那一层，不确定就先看 DEPLOY.md §0
+.\install.ps1            # 自动判断；会提示输入 LLM API Key（可回车跳过）
+
+.\install.ps1 -Mode local -LlmApiKey sk-xxx -Yes      # 强制本地开发，非交互
+.\install.ps1 -Mode docker -SitePort 80 -Yes          # 强制 Docker 部署
+.\install.ps1 -SkipFrontend -NoStart                  # 只准备环境，不装前端、不起服务
+.\stop.ps1                                            # 停本地服务；-Docker 停容器，-WithPg 连数据库一起停
+```
+
+- **幂等**：可重复执行；已存在的 `.env` / `docker\.env.docker` 默认保留，`-Force` 才重建（会先备份）。
+- **Docker 引擎不可用时会说清楚原因**（Docker Desktop 没启动 / 未启用 WSL2-Hyper-V），自动模式随即回落到本地开发。
+- **没装 PostgreSQL 时给出三种获取方式**（含本机便携版路径 `-PgRoot`）。
+- 全程日志写在 `logs\install-*.log`；主机名、端口、库名、管理员账号都能用参数改。
+
 ### 方式一：Docker 部署（推荐）
 
 ```bash
@@ -335,8 +355,8 @@ cp .env.example .env
 
 # 5) 初始化数据库
 createdb -U postgres bidmaster                    # 或 psql -U postgres -c "CREATE DATABASE bidmaster;"
-psql -U postgres -d bidmaster -f db/init_pg.sql   # 建 11 张基础表
-# 其余表由应用启动时的 init_db() → Base.metadata.create_all 自动补齐（实测共 22 张）
+psql -U postgres -d bidmaster -f db/init_pg.sql   # 基础表 + 默认角色/权限/Agent（幂等，可重复导入）
+# 其余表由 init_db() → Base.metadata.create_all 补齐（实测共 22 张）；启动 API 时会自动执行
 # ⚠️ 不要用 alembic upgrade head：alembic.ini 指向 db/migrations，而仓库里并没有这个目录
 
 # 6) 启动后端（在仓库根目录执行）
@@ -366,7 +386,7 @@ npm run electron:dev
 | 环节 | 结果 | 关键证据 |
 | --- | --- | --- |
 | 方式二 · 依赖安装 | ✅ | 全新 venv 执行 `pip install -e .` → `Successfully installed … zhibiao-1.0.0`（218 个包） |
-| 方式二 · 数据库 | ✅ | 独立库导入 `db/init_pg.sql` 建 11 张表；API 启动后 `create_all` 补齐到 **22 张** |
+| 方式二 · 数据库 | ✅ | 空库导入 `db/init_pg.sql` **0 报错**（循环外键 + RBAC ID 超长两处缺陷已修）：**17 张表**、**72 行**角色-权限绑定（admin 27 / 项目经理 25 / 撰写 13 / 审核 7）、管理员已绑 admin 角色；再执行 `init_db()` 补到 **22 张表**，重复导入仍 0 报错且行数不变 |
 | 方式二 · API 启动 | ✅ | `/api/health` 200（`db_ready:true`）、`/api/stats` 200（**46 个 Skill**）、`/openapi.json` 200 |
 | 方式二 · 登录与鉴权 | ✅ | 登录返回 64 位会话 token；带 token 访问 `/api/projects/`、`/api/skills/` 均 200；**不带 token 全部 401** |
 | 方式二 · 业务写入 | ✅ | 建项目 → 回读 → 删除，验证库恢复为空（写路径与事务正常） |
@@ -374,8 +394,9 @@ npm run electron:dev
 | 方式二 · 前端构建 | ✅ | `npm run build`（tsc + vite）16.4s 通过，产物 `dist/index.html` + `index-*.js`（1.70 MB / gzip 525 KB） |
 | 方式二 · 前端 dev | ✅ | `npm run dev` 起在 **15168**，页面返回 `<title>智标</title>` |
 | 方式二 · Celery | ✅ | 本机用 fakeredis 提供 RESP 兼容服务：worker 连上 broker、Lua 锁脚本执行成功、打印 `celery@R ready.`，并注册 `run_batch_format` / `run_full_check` / `run_news_monitor` 三个任务（真 Redis 下同理，本次未跑任务消费） |
+| ⚡ 一键脚本 `install.ps1` | ✅ | 在**干净副本**里用 Windows PowerShell 5.1 跑通全流程：venv + `pip install -e .` → `npm install` → 起便携 PostgreSQL → 建库 → `init_pg.sql` **0 报错** → `init_db()` **22 张表** → 建管理员 → API `/api/health` 就绪 → 前端 15168 就绪；`stop.ps1` 按端口停掉 API 与前端（8000/15168 均已释放）。Docker 引擎不可用时自动回落本地，并打印 WSL2/Hyper-V 的处理办法 |
 | 字体归一化 | ✅ | `tools/font_normalize_evidence.py`：缺 `w:eastAsia` 的 run **5 → 0**（见上方实测表） |
-| 方式一 · Docker | ⚠️ 未实机 | 验证机没装 Docker，无法构建镜像；改做静态校验：`docker-compose.yml` 解析通过（9 个服务）、所有挂载源存在、两个 Dockerfile 步骤正常。**线上正是这套 compose 在跑**（`http://39.106.251.153/` → HTTP 200），可作为长期运行证据 |
+| 方式一 · Docker | ⚠️ 未能实机跑通 | 验证机装了 Docker Desktop（CLI 29.8.2 / compose v5.5.1，`docker compose config --quiet` 对整套编排**校验通过，exit 0**），但本机 **WSL2 未安装、`HypervisorPresent=False`**，引擎起不来（`Error response from daemon: Docker Desktop is unable to start`）。**线上正是这套 compose 在跑**（`http://39.106.251.153/` → HTTP 200），可作为长期运行证据 |
 
 **已知边界（如实列出，不当作已完成）：**
 

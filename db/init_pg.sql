@@ -111,7 +111,7 @@ CREATE TABLE IF NOT EXISTS projects (
     user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,  -- 项目创建者用户ID
     name VARCHAR(200) NOT NULL,                        -- 项目名称
     status VARCHAR(50) DEFAULT 'created',              -- 项目状态：created(创建)/interpreting(解读中)/analyzing(分析中)/outlining(大纲)/generating(生成中)/checking(检查中)/formatting(格式化)/completed(完成)/archived(归档)
-    tender_doc_id VARCHAR(36) REFERENCES documents(id),-- 关联的招标文件文档ID
+    tender_doc_id VARCHAR(36),                         -- 关联的招标文件文档ID（外键在 documents 建表后补，避免循环依赖）
     config JSON,                                       -- 项目配置信息（模板选择、参数设置等）
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -148,6 +148,20 @@ COMMENT ON COLUMN documents.file_size IS '文件大小（字节）';
 COMMENT ON COLUMN documents.parsed_content IS '解析后的文本内容';
 COMMENT ON COLUMN documents.doc_metadata IS '文档元数据（页数、表格数、章节结构等）';
 COMMENT ON COLUMN documents.created_at IS '文档上传时间';
+
+-- 2.3 补齐 projects -> documents 的外键
+-- 说明：projects.tender_doc_id 引用 documents(id)，而 documents.project_id 又引用 projects(id)，
+--       两表互相引用。内联写 REFERENCES 会让这两张表在空库上都建不出来，后续 74 条
+--       COMMENT / INDEX 语句会级联报 "relation ... does not exist"（实测）。
+--       因此外键统一挪到两表都建好之后再补，且可重复执行。
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_projects_tender_doc') THEN
+        ALTER TABLE projects
+            ADD CONSTRAINT fk_projects_tender_doc
+            FOREIGN KEY (tender_doc_id) REFERENCES documents(id);
+    END IF;
+END $$;
 
 -- ============================================================
 -- 三、招标解读模块
@@ -481,23 +495,27 @@ ON CONFLICT (code) DO NOTHING;
 -- ============================================================
 -- 十一、初始数据 - 角色权限分配 (与 rbac.py DEFAULT_ROLES 对齐)
 -- ============================================================
+-- 注意：id 列是 VARCHAR(36)，**不能**再用 '前缀' || p.code 拼 ID——最长的 code 会拼到 40+ 字符，
+--       PostgreSQL 直接报 "value too long"，整条 INSERT ... SELECT 会整体失败（实测 4 条语句全废、
+--       角色-权限绑定一条都写不进去）。改用 uuid_generate_v4()::text（固定 36 字符），
+--       幂等性由 ON CONFLICT (role_id, permission_id) DO NOTHING 保证。
 
 -- 管理员: 拥有所有权限
 INSERT INTO rbac_role_permissions (id, role_id, permission_id)
-SELECT '00000000-0000-0000-rp-admin-' || p.code, r.id, p.id
+SELECT uuid_generate_v4()::text, r.id, p.id
 FROM rbac_roles r, rbac_permissions p WHERE r.name = 'admin'
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
 -- 项目经理: 除 settings.rbac 和 settings.agent 外所有权限
 INSERT INTO rbac_role_permissions (id, role_id, permission_id)
-SELECT '00000000-0000-0000-rp-mgr-' || p.code, r.id, p.id
+SELECT uuid_generate_v4()::text, r.id, p.id
 FROM rbac_roles r, rbac_permissions p
 WHERE r.name = 'project_manager' AND p.code NOT IN ('settings.rbac', 'settings.agent')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
 -- 撰写员: 项目读写 + 解读 + 生成 + 检查执行/导出 + 格式化执行 + 知识搜索
 INSERT INTO rbac_role_permissions (id, role_id, permission_id)
-SELECT '00000000-0000-0000-rp-writer-' || p.code, r.id, p.id
+SELECT uuid_generate_v4()::text, r.id, p.id
 FROM rbac_roles r, rbac_permissions p
 WHERE r.name = 'writer' AND p.code IN (
     'project.create', 'project.read', 'project.update',
@@ -511,7 +529,7 @@ ON CONFLICT (role_id, permission_id) DO NOTHING;
 
 -- 审核员: 项目查看 + 解读查看 + 内容审核 + 检查 + 格式化
 INSERT INTO rbac_role_permissions (id, role_id, permission_id)
-SELECT '00000000-0000-0000-rp-reviewer-' || p.code, r.id, p.id
+SELECT uuid_generate_v4()::text, r.id, p.id
 FROM rbac_roles r, rbac_permissions p
 WHERE r.name = 'reviewer' AND p.code IN (
     'project.read',

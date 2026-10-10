@@ -45,6 +45,7 @@ celerybeat-schedule.pid
 
 # ===== 日志 =====
 *.log
+logs/
 
 # ===== Node.js =====
 packages/desktop/node_modules/
