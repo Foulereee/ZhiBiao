@@ -185,3 +185,53 @@
   「🛑 停止、重启与升级」（含 `docker compose down -v` 等于删库的警告）。
 - `install.ps1`：`-DevPort` 现在**真正生效**（显式给 vite 传 `--port <n> --strictPort`；此前只改了探测地址，
   vite 仍用配置里写死的 15168），因此可在不影响已有实例的前提下于独立端口再部署一套。
+
+## [1.0.4] - 2026-10-10
+
+本轮是**仓库整理**（体积 / 冗余 / 对外信息面），不改业务功能。所有删除项都仍可从 git 历史取回，
+例如：`git checkout 5cf4acf -- alembic.ini start.bat`。
+
+### Added（新增）
+
+- `tools/optimize_images.py`：可重复执行的图片瘦身工具，带 PSNR 安全阀（低于 35 dB 就跳过、不替换原图）。
+  实测把 17 张 PNG 从 **4.73 MB 压到 1.33 MB（−72%）**：
+  - `logo.png`：2048×2048 / 2.39 MB → 256×256 / **64 KB**（仅缩放、无损；它在 `Sidebar.tsx` 只显示 32×32）；
+  - 13 张 README 截图：降到 1400px 宽 + 256 色量化，PSNR 39–47 dB，1.64 MB → 0.95 MB；
+  - 3 张架构/流程图：**保持原尺寸**只做 256 色量化（原本是 24 位 RGB 存线稿，属低效保存），PSNR 54–56 dB，0.70 MB → 0.26 MB。
+  仓库受控文件总量 **7.19 MB → 3.79 MB**；前端构建产物里的 logo 资源 2.4 MB → **66 KB**。
+- `DEPLOY.md` §10「迁移到另一台主机（通用做法）」：导出库 / 数据卷 / 环境文件 → 新机恢复 → 逐条核对 → 日常上线，
+  用通用命令替代原先依赖私有脚本的流程（并如实标注 Docker 路径未在本机实机跑通）。
+
+### Removed（删除）
+
+- `alembic.ini` 与 `alembic` 依赖：配置指向并不存在的 `db/migrations`，`alembic upgrade head` 必然失败，
+  且全仓库没有任何代码引用 alembic。建表统一走 `db/init_pg.sql` + 启动时 `create_all`。
+- `core/doc_engine/onnx_classifier.py`（152 行）与 `onnxruntime` 依赖：公开仓库内**零调用方**，
+  `core/doc_engine/__init__.py` 也没有转导出它；`onnxruntime` 只被这个文件使用，故一并移除。
+- `core/skill_engine/check_normalizer.py`（194 行）：同样零引用（`core/skill_engine/__init__.py` 未导出）。
+- `start.bat`：与 `install.ps1` 职责重叠，且第 2 行 `chcp 65001` 正是刚修掉的那类"cmd 丢行"隐患。
+  Windows 统一用 `install.ps1`，Linux/macOS 用 `start.py`。
+- `THIRD_PARTY_NOTICES.md`：内容并入 `NOTICE.md` 第 5 节（并补记本轮移除的 Alembic / ONNX Runtime）。
+- `deploy/export_all.sh`、`deploy/import_all.sh`、`deploy/rebuild_and_verify.sh` 以及《全新主机部署手册》《部署迁移方案》：
+  这些是本项目生产环境的运维资产（含真实主机路径、容器名、定时任务、备份与看门狗策略），**移出公开仓库**，
+  保留在维护者本地的 `迁移部署/`（该目录在 `.gitignore` 内）。`deploy/` 现只保留 `seed_admin.py`。
+
+### Fixed（修复）
+
+- **README / DEPLOY 里"logo 进 bundle 导致主 chunk 1.7 MB"的说法有误**：实测 vite 用默认 4 KB 内联阈值，
+  logo 一直是独立产物（压缩后 66 KB）；替换前后主 chunk 都是 1.70 MB / gzip 525 KB。已按实测更正，
+  并说明 chunk 偏大的真实原因是依赖体积与尚未按路由拆包。
+- **文档称 `core/agent_engine/` 为预留、未接入运行路径，与代码不符**：`services/routers/generate.py`、
+  `projects.py` 与多 Agent 技能共 5 处 `from core.agent_engine.gate_keeper import GateKeeper`。
+  已更正为"`gate_keeper.py` 已接入；`orchestrator.py`（LangGraph 建图）仍为预留、仅包内自引用"。
+- **`start.py` 在中文 Windows 控制台会崩**：19 处 emoji 符号（✅/❌/⚠️/📦/🗄️/🚀）换成 `[OK]`/`[X]`/`[!]`/`[*]`
+  （GBK 控制台无法编码 emoji）；同时把 Python 版本门槛从 3.11 对齐到 `pyproject.toml` 的 `requires-python = ">=3.12"`。
+
+### Security（对外信息面收敛）
+
+- `README.md` 去掉生产站点 IP，只保留"同一套 compose 已在公网 80 端口长期运行（HTTP 200）"这一可验证结论。
+- `services/routers/app_config.py`（3 处）与 `core/settings.py`（1 处）里把宿主机真实部署路径
+  `/opt/bidmaster/.env` 改写成"宿主机仓库根目录/.env"；`docker/docker-compose.yml` 的网络名 `bidmaster-net`
+  属内部命名、无敏感性，保留（改名会与既有部署不一致）。
+- 复核结论：仓库内**没有**硬编码密钥；唯一出现的口令是文档中说明的 `db/init_pg.sql` 默认管理员密码
+  `admin123`（部署后必须立即修改）；`服务器运维说明.md`、`迁移部署/`、`验证环境/` 均未上传。

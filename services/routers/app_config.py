@@ -17,7 +17,7 @@
                                      立即生效，不需要重建容器，也不需要重新
                                      构建前端（前端是运行时拉取的）。
 
-注意：容器里的 `/app/.env` 是宿主机 `/opt/bidmaster/.env` 的 bind mount
+注意：容器里的 `/app/.env` 是**宿主机仓库根目录 `.env`** 的 bind mount
 （见 docker-compose 的 x-api-volumes）。没有这个挂载，写入只会落在容器内
 一个随容器销毁的文件上，改了等于没改。
 """
@@ -74,7 +74,7 @@ def _env_debug() -> dict[str, Any]:
     """报告**本进程当前看到的** .env 状态。
 
     排查「.env 改了不生效」时用它：拿这里的 inode / mtime 跟宿主机上
-    `stat -c '%i %y' /opt/bidmaster/.env` 对一下。
+    `stat -c '%i %y' <宿主机仓库根目录>/.env` 对一下。
 
     - inode 不一样  → 踩到了单文件 bind mount 的坑（宿主机用 sed -i 之类
       「原子替换」方式改的，容器挂载点还指着旧 inode）。此时**必须重建容器**：
@@ -89,7 +89,7 @@ def _env_debug() -> dict[str, Any]:
         return info
     info["exists"] = True
     info["mtime_ns"], info["size"], info["inode"] = stamp
-    info["hint"] = "把 inode/mtime_ns 与宿主机 stat -c '%i %Y' /opt/bidmaster/.env 对比；不一致即为挂载点过期，需重建容器"
+    info["hint"] = "把 inode/mtime_ns 与宿主机 stat -c '%i %Y' <仓库根目录>/.env 对比；不一致即为挂载点过期，需重建容器"
     return info
 
 

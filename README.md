@@ -43,7 +43,7 @@
 | **排版链路的字体与未排版链路不一致（仿宋_GB2312 / 宋体混用）** | 按段落样式识别标题（Heading1~3 一律黑体），把误套上来的正文字体纠正掉，使 `apply_format=true/false` 两条导出链路字体一致 |
 | **新主机按示例部署后随机退出登录 / 401** | 登录会话保存在进程内字典，而示例配置给的是 `--workers 2`：多进程间会话不共享。已把 `docker/.env.docker.example` 固定为 `UVICORN_WORKERS=1` 并写明原因（生产实际也是 1） |
 | **Windows 下 `start-postgres.bat` / `stop-postgres.bat` 无法执行** | 这两个批处理原本是 LF 行尾，cmd 会逐行报"不是内部或外部命令"。已在 `.gitattributes` 固定 `*.bat text eol=crlf` |
-| **`alembic upgrade head` 在全新克隆上必然失败** | 仓库内确实没有 `db/migrations`（`alembic.ini` 指向它）。文档改为 `psql -f db/init_pg.sql`，并说明启动时 `init_db()` 会 `create_all` 补齐其余表（实测 22 张） |
+| **`alembic upgrade head` 在全新克隆上必然失败** | 仓库内既没有 `db/migrations`，`alembic.ini` 又指向它。**本轮已删除该死配置以及 `alembic` 依赖**：建表统一走 `psql -f db/init_pg.sql`（17 张）+ 启动时 `init_db()` 的 `create_all` 补齐（实测共 22 张） |
 | **`start-postgres.bat` 双击一闪而过、数据库起不来** | 两个 bat 是 UTF-8 却在第 2 行 `chcp 65001`——cmd.exe 会按**切换前的代码页**重算文件偏移，之后每一行都被跳过（实测：脚本一行输出都没有、`pg.log` 都没生成）。已改为 **ASCII-only、不带 chcp**，实测"已在运行 / 启动成功 / 停止"三分支全部正常；`stop-postgres.bat` 的兜底也从 `taskkill /IM postgres.exe /F`（会误杀同机其它 PostgreSQL 实例）改为只结束本目录 `postmaster.pid` 里的 PID |
 | **`db/init_pg.sql` 的角色-权限绑定一条都写不进去** | 4 条 `INSERT ... SELECT` 用 `'前缀' \|\| p.code` 拼 `id`，最长的拼到 40+ 字符，超过 `VARCHAR(36)` → PostgreSQL 报 `value too long`，**整条 INSERT 整体失败**（实测绑定 0 行）。改用 `uuid_generate_v4()::text`（固定 36 字符），幂等性仍由 `ON CONFLICT (role_id, permission_id)` 保证：实测 **72 行**绑定（admin 27 / 项目经理 25 / 撰写 13 / 审核 7），重复导入行数不变 |
 | **资讯中心抓取接口 500** | `services/news/fetchers.py` 直接 import 的 `feedparser` 没写进 `pyproject.toml`，已补齐（并补 `redis` / `minio` 等隐式依赖） |
@@ -70,10 +70,9 @@
 | **窄屏 / 移动端适配** | 新增 `renderer/src/hooks/useIsNarrow.ts`，重做 AppLayout / Header / Sidebar 的三段式布局，手机浏览器可直接使用 |
 | **品牌与参数在线配置** | `GET/PUT /api/app-config`：平台名称、Logo、端口等写入 `.env` 即时生效，无需手改文件（写入走 `core/env_store.py`，不破坏注释） |
 | **时间与页码工具** | 新增 `utils/datetime.ts`（统一时区与展示格式）与 `utils/wordPage.ts`（Word 页码 / 分节处理） |
-| **一键迁移工具链** | `deploy/`：`export_all.sh` / `import_all.sh` / `rebuild_and_verify.sh` / `seed_admin.py`，换主机时数据、上传件与站点配置一起搬（`seed_admin.py` 实测幂等建 27 权限 / 4 角色 / 管理员） |
-| **部署手册与迁移方案** | `deploy/` 内附带《全新主机部署手册》《部署迁移方案》，新机器照抄即可 |
+| **迁移与运维** | `deploy/seed_admin.py` 幂等建 27 权限 / 4 角色 / 管理员；换主机的通用步骤（导出库 + 数据卷 + 环境文件 → 新机恢复 → 逐条核对）见 [DEPLOY.md](DEPLOY.md) §10。维护者生产环境的自动化运维脚本（构建打回滚镜像、失败自动回滚、每日备份、前端看门狗，含真实主机路径）属私有资产，**不随本仓库发布** |
 | **可复现的实测脚本** | `tools/font_normalize_evidence.py`：把字体归一化的前后差异量化，下表数据就是它跑出来的 |
-| **开源合规文件** | `NOTICE.md` / `CHANGELOG.md` / `CONTRIBUTING.md` / `SECURITY.md` / `THIRD_PARTY_NOTICES.md` |
+| **开源合规文件** | `NOTICE.md`（含第三方组件许可）/ `CHANGELOG.md` / `CONTRIBUTING.md` / `SECURITY.md` |
 
 ### 🧪 修复效果实测（可复现）
 
@@ -237,7 +236,7 @@ python tools/font_normalize_evidence.py ./out       # 连同样例 docx 一起�
 |------|------|------|
 | **OpenAI SDK** | LLM 调用（OpenAI 兼容端点，直连；未走 litellm 转发） | >=1.0 |
 | **自研多 Agent 框架** | SupervisorAgent 模板编排 + Agent 池 + 消息总线 + 检查点续跑 | — |
-| **LangGraph** | 可选编排引擎（`core/agent_engine/`，预留、未接入运行路径） | >=0.2 |
+| **LangGraph** | 可选编排引擎（`core/agent_engine/orchestrator.py`，预留、未接入 HTTP 路径；同目录 `gate_keeper.py` **已接入**） | >=0.2 |
 | **LangChain-Core** | 未直接使用（随 langgraph 传递安装，待清理） | >=0.3 |
 | **ChromaDB** | 向量数据库 | >=0.5 |
 | **Sentence-Transformers** | 文本嵌入 | >=3.0 |
@@ -431,7 +430,7 @@ cp .env.example .env
 createdb -U postgres bidmaster                    # 或 psql -U postgres -c "CREATE DATABASE bidmaster;"
 psql -U postgres -d bidmaster -f db/init_pg.sql   # 基础表 + 默认角色/权限/Agent（幂等，可重复导入）
 # 其余表由 init_db() → Base.metadata.create_all 补齐（实测共 22 张）；启动 API 时会自动执行
-# ⚠️ 不要用 alembic upgrade head：alembic.ini 指向 db/migrations，而仓库里并没有这个目录
+# ⚠️ 不要用 alembic upgrade head：本仓库不含数据库迁移（也没有 alembic.ini），建表只走上面这两条命令
 
 # 6) 启动后端（在仓库根目录执行）
 uvicorn services.main:app --reload --host 0.0.0.0 --port 8000
@@ -498,7 +497,7 @@ $r.token.Length                                   # 期望 64
 | 表结构 | `public` 下 **22 张表**（`init_pg.sql` 建 17 张，`init_db()` 补齐） |
 | 角色权限 | `rbac_role_permissions` **72 行**（admin 27 / 项目经理 25 / 撰写 13 / 审核 7） |
 | 鉴权 | 带 token 200；不带 token 401 |
-| 线上参考 | `http://39.106.251.153/` → HTTP 200 |
+| 生产形态参考 | 同一套 compose 已在公网 80 端口长期运行（HTTP 200）；你自己的站点请用 `http://<主机IP>/` 验证 |
 
 ### 🛑 停止、重启与升级
 
@@ -530,17 +529,21 @@ $r.token.Length                                   # 期望 64
 | 方式二 · Celery | ✅ | 本机用 fakeredis 提供 RESP 兼容服务：worker 连上 broker、Lua 锁脚本执行成功、打印 `celery@R ready.`，并注册 `run_batch_format` / `run_full_check` / `run_news_monitor` 三个任务（真 Redis 下同理，本次未跑任务消费） |
 | ⚡ 一键脚本 `install.ps1` | ✅ | **独立端口 + 全新库实测（Windows PowerShell 5.1）**：①干净副本 `-Mode auto -DbName bidmaster_e2e -ApiPort 8010 -DevPort 15178` → 自动识别 Docker 引擎不可用、打印 WSL2/Hyper-V 处理办法后**回落本地** → venv + `pip install -e .` → `npm install` → 起便携 PostgreSQL → **新建库** → `init_pg.sql` **0 报错** → `init_db()` **22 张表** → 生成 `.env`（库地址指向本次 `-DbName`）→ 建管理员 → API `/api/health` 200（`db_ready:true`）→ 前端 15178 就绪（`<title>智标</title>`）；登录返回 **64 位** token、带 token 200 / 不带 401、`rbac_role_permissions` **72 行**。②**幂等复跑**：venv 复用、`node_modules` 跳过、表与绑定行数不变（22 / 72）。③`stop.ps1 -ApiPort 8010 -DevPort 15178` 精确停掉 API 与 vite 进程，8010/15178 释放为 0，另一套 8000/15168 不受影响。④`-Mode docker` 在缺 WSL2 的机器上给出处理办法后中止（同一编排 `docker compose config --quiet` → **exit 0**） |
 | 字体归一化 | ✅ | `tools/font_normalize_evidence.py`：缺 `w:eastAsia` 的 run **5 → 0**（见上方实测表） |
-| 方式一 · Docker | ⚠️ 未能实机跑通 | 验证机装了 Docker Desktop（CLI 29.8.2 / compose v5.5.1，`docker compose config --quiet` 对整套编排**校验通过，exit 0**），但本机 **WSL2 未安装、`HypervisorPresent=False`**，引擎起不来（`Error response from daemon: Docker Desktop is unable to start`）。**线上正是这套 compose 在跑**（`http://39.106.251.153/` → HTTP 200），可作为长期运行证据 |
+| 方式一 · Docker | ⚠️ 未能实机跑通 | 验证机装了 Docker Desktop（CLI 29.8.2 / compose v5.5.1，`docker compose config --quiet` 对整套编排**校验通过，exit 0**），但本机 **WSL2 未安装、`HypervisorPresent=False`**，引擎起不来（`Error response from daemon: Docker Desktop is unable to start`）。**线上正是这套 compose 在跑**（公网 80 端口长期 HTTP 200），可作为长期运行证据 |
 
 **已知边界（如实列出，不当作已完成）：**
 
 1. 登录会话存在**进程内字典**（`services/routers/auth.py` 的 `_sessions`），所以 `UVICORN_WORKERS` 必须为 1；
    要横向扩容需先把会话迁到 Redis。
-2. `alembic.ini` 指向的 `db/migrations` 目录不存在，`alembic upgrade head` 必然失败（已在上面文档中避开）。
-3. 前端包体偏大：`renderer/src/assets/logo.png` 有 **2.51 MB** 且直接进 bundle，主 chunk 1.70 MB；
-   建议压缩 logo 并按路由拆包。
+2. 本仓库**不做数据库迁移**：没有 `db/migrations`，也没有 `alembic.ini`（本轮已删除该死配置及 `alembic` 依赖）。
+   改表结构请同时维护 `db/init_pg.sql` 与模型；注意 `create_all` 只建不改，不会迁移既有表。
+3. 前端主 chunk 仍有 **1.70 MB / gzip 525 KB**，来自依赖体积与尚未按路由拆包。`renderer/src/assets/logo.png`
+   原本是 2048×2048 / **2.39 MB**，而它在 `Sidebar.tsx` 里只显示 **32×32**；本轮已用 `tools/optimize_images.py`
+   压到 **64 KB**（构建产物 66 KB）。需要更正一点：它一直是**独立产物、并未打进 JS chunk**，
+   此前"logo 进 bundle 导致主 chunk 大"的说法有误。
 4. `/api/projects` 这类以 `/` 结尾的路由会返回 307 跳转，客户端调用需带尾斜杠。
-5. `core/agent_engine/`（LangGraph）为预留能力，未接入运行路径；`langchain-core` 由依赖传递安装。
+5. `core/agent_engine/gate_keeper.py` **已接入**（`services/routers/generate.py`、`projects.py` 与多 Agent 技能共 5 处引用）；
+   同目录 `orchestrator.py`（LangGraph DSL 动态建图）仍是预留能力，仅包内自引用、未进 HTTP 路径；`langchain-core` 由依赖传递安装。
 
 ---
 
@@ -621,7 +624,7 @@ PIPELINE_TEMPLATES = {
 }
 ```
 
-> 另有 `core/agent_engine/orchestrator.py` 提供的 **LangGraph（DSL 动态建图）** 引擎，属预留能力，当前**未接入 HTTP 运行路径**，DSL 形如：
+> 另有 `core/agent_engine/orchestrator.py` 提供的 **LangGraph（DSL 动态建图）** 引擎，属预留能力，当前**未接入 HTTP 运行路径**（同目录 `gate_keeper.py` 已接入），DSL 形如：
 
 ```python
 pipeline_dsl = {
@@ -666,7 +669,7 @@ if not gate_keeper.is_passed(project_id, "interpret"):
 - 本仓库是 [guangshu100/BidMaster-Pro](https://github.com/guangshu100/BidMaster-Pro) 的**衍生作品**，上游同样以 AGPL-3.0 授权，上游版权归原作者所有；
 - 我的修改内容与日期见 [NOTICE.md](NOTICE.md) 与 [CHANGELOG.md](CHANGELOG.md)；
 - 依据 **AGPL-3.0 第 13 条**，通过网络与本程序交互的用户有权获取对应源代码：源码即本仓库，也可邮件 [1817558146@qq.com](mailto:1817558146@qq.com) 索取；
-- 第三方依赖及其许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)（注意 PyMuPDF 为 AGPL/商业双授权）。
+- 第三方依赖及其许可见 [NOTICE.md](NOTICE.md) 第 5 节（注意 PyMuPDF 为 AGPL/商业双授权）。
 
 > ⚠️ 上游 README 曾写作 “MIT”，但其 `LICENSE` 文件与 GitHub 识别均为 AGPL-3.0；以实际授权文本为准，本仓库**未采用 MIT**。
 

@@ -114,7 +114,7 @@ def get_settings() -> Settings:
     为什么不再「启动读一次就完事」：
       Settings 缓存在模块级变量里，以前只有显式调用 reload_settings()
       （也就是走 PUT /api/app-config/config 那条路）才会重读 .env。
-      结果就是 —— ssh 上去直接改 /opt/bidmaster/.env 对**已经跑着的进程毫无作用**，
+      结果就是 —— ssh 上去直接改宿主机仓库根目录下的 .env 对**已经跑着的进程毫无作用**，
       改了不生效，必须重建容器。这正是「.env 修改后并没有同步」的原因。
 
       现在每次取配置时顺手看一眼 .env 的 mtime/size/inode，变了就自动重新加载，

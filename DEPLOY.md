@@ -56,7 +56,7 @@ cd D:\ZhiBiao-main\ZhiBiao-main      # 进到含 pyproject.toml 的那一层
 | `docker/.env.docker.example` | **方式一的插值变量**模板（`LLM_API_KEY` 等，无 `BMP_` 前缀） | docker compose |
 | `.env.example` → `.env` | **方式二的运行配置**（`BMP_*`）；方式一里它被挂载进容器 | pydantic / api 容器 |
 | `templates/`、`skills/` | 文档模板与 Skill 定义，容器内只读挂载 | 后端 |
-| `deploy/` | 迁移工具链 + 手册 + `seed_admin.py`（**建管理员账号**） | 手动执行 |
+| `deploy/` | `seed_admin.py`（**建管理员账号**）。运维脚本与迁移实录手册**不随公开仓库发布**（见 §10） | 手动执行 |
 | `tools/font_normalize_evidence.py` | 字体归一化实测脚本（与部署无关） | 手动执行 |
 | 卷 `pgdata` `redisdata` `miniodata` `projects` `chroma` `uploads` `celerybeat` | 数据持久化 | docker |
 
@@ -200,7 +200,7 @@ docker compose -f docker/docker-compose.yml --profile infra up -d postgres redis
 createdb -U postgres bidmaster                    # 或： psql -U postgres -c "CREATE DATABASE bidmaster;"
 psql -U postgres -d bidmaster -f db/init_pg.sql   # 基础表 + 默认角色/权限/Agent（幂等）
 # 其余表由 init_db() → Base.metadata.create_all 补齐（实测共 22 张）
-# ⚠️ 不要用 alembic upgrade head：alembic.ini 指向 db/migrations，而仓库里没有这个目录
+# ⚠️ 不要用 alembic upgrade head：本仓库不含数据库迁移（既没有 db/migrations，也没有 alembic.ini）
 
 # 5) 配置：.env 放在"启动命令所在目录"（pydantic 的 env_file=".env" 是相对 CWD 的）
 Copy-Item .env.example .env
@@ -311,7 +311,7 @@ npm run build       # 产物：packages/desktop/dist
 | 根目录出现一个名为 `.env` 的**文件夹** | 挂载 `../.env` 时源文件不存在，Docker 自动建了目录 | 停容器 → 删该目录 → `Copy-Item .env.example .env` → 重启 |
 | `port is already allocated` / 8080 起不来 | 端口被占 | 改 `WEB_PORT` / `API_PORT` / `POSTGRES_PORT` |
 | 反复被登出、随机 401 | `UVICORN_WORKERS` > 1（会话在进程内） | 保持为 `1` |
-| `alembic upgrade head` 报 `Path doesn't exist: db\migrations` | 仓库没有迁移目录 | 用 `psql -f db/init_pg.sql`，其余表由启动时 `create_all` 建 |
+| `alembic upgrade head` 报 `Path doesn't exist: db\migrations` | 仓库既没有迁移目录，也没有 `alembic.ini`（该文件与 `alembic` 依赖本轮已删除） | 用 `psql -f db/init_pg.sql`，其余表由启动时 `create_all` 建 |
 | `psql -f db/init_pg.sql` 刷出一堆 `relation "projects"/"documents" does not exist` | **老版本 `init_pg.sql` 的缺陷**：`projects.tender_doc_id → documents(id)` 与 `documents.project_id → projects(id)` 互相引用，两张表都建不出来，后续 74 条语句级联报错 | 用本仓库当前的 `db/init_pg.sql`（已改为末尾补外键，空库导入 0 报错）；若用的是旧副本，这些报错**可以忽略**——启动 API 时 `init_db()` 会建全 22 张表 |
 | `psql -f db/init_pg.sql` 报 `value too long for type character varying(36)` | **老版本 `init_pg.sql` 的缺陷**：角色-权限绑定用 `'前缀' \|\| p.code` 拼 `id`，最长的超过 36 字符 → 整条 `INSERT ... SELECT` 回滚，RBAC 绑定一行都写不进去 | 用本仓库当前的 `db/init_pg.sql`（改用 `uuid_generate_v4()::text`，实测 72 行绑定且可重复导入）；旧副本可忽略该报错——应用启动时 `rbac.py` 会自行补齐 |
 | 双击 `start-postgres.bat` 一闪而过、数据库没起来（连 `.pgsql\pg.log` 都没生成） | **老版本 bat 的缺陷**：UTF-8 批处理里中途 `chcp 65001`，cmd 会按切换前的代码页重算偏移、丢掉其后所有行 | 用本仓库当前的 bat（已改为 ASCII-only、不带 chcp）；或绕过它直接 `.\.pgsql\extracted\pgsql\bin\pg_ctl.exe -D .pgsql\data -l .pgsql\pg.log -w start` |
@@ -356,8 +356,10 @@ Error response from daemon: Docker Desktop is unable to start
 ## 8. 已知边界
 
 1. 登录会话在**进程内**，`UVICORN_WORKERS` 必须为 1（扩容需先迁 Redis）。
-2. `alembic.ini` 指向的 `db/migrations` 不存在，`alembic upgrade head` 必然失败。
-3. 前端 `renderer/src/assets/logo.png` 有 2.45 MB 且进 bundle，主 chunk 1.7 MB（建议压缩 + 按路由拆包）。
+2. 本仓库**不做数据库迁移**：没有 `db/migrations`，也没有 `alembic.ini`（该文件与 `alembic` 依赖本轮已删除），
+   `alembic upgrade head` 必然失败；建表统一走 `psql -f db/init_pg.sql` + 启动时 `create_all`。
+3. 前端主 chunk 1.7 MB / gzip 525 KB（建议按路由拆包）。`renderer/src/assets/logo.png` 曾是 2048×2048 / 2.39 MB，
+   而它只显示在 32×32 的位置，本轮已压到 64 KB；它一直是**独立产物、不在 JS chunk 内**。
 4. `/api/projects` 这类以 `/` 结尾的路由会 307 跳转，客户端需带尾斜杠。
 5. `core/agent_engine/`（LangGraph）为预留能力，未接入运行路径。
 6. 导出 PDF 若在缺少中文字体的环境运行，字体会被替换（交付 docx 或用装了字体的镜像）。
@@ -426,3 +428,90 @@ logs\postgres.log                便携 PostgreSQL（由 pg_ctl 启动时）
 ```
 
 > Docker Desktop 未启用 WSL2/Hyper-V 时，`install.ps1 -Mode auto` 会自动改为本地模式，不会卡在半路。
+
+---
+
+## 10. 迁移到另一台主机（通用做法）
+
+公开仓库**不包含**维护者自己生产环境用的运维脚本与实录手册（导出/导入/重建校验脚本，以及含有真实主机路径、
+容器名、定时任务与备份策略的那两份文档）——那属于私有运维资产，与本项目的开源发布无关。
+要在新主机上搬一套系统，用下面这套通用命令即可。
+
+> 说明：本节是按本仓库的 compose 结构写出的通用做法。Docker 路径在本机因缺少 WSL2/Hyper-V 未能实机跑通（见 §7），
+> 正式迁移前请先在演练环境完整走一遍。
+
+### 10.1 思路
+
+Docker 部署下，真正需要搬走的只有四样：**数据库、业务数据卷、`docker/.env.docker`、源码**。
+前端产物由镜像/站点容器负责，重新构建即可。
+
+### 10.2 老主机：导出
+
+```bash
+cd <老主机上的仓库根目录>
+
+# 1) 数据库（事务一致的逻辑快照）
+docker compose -f docker/docker-compose.yml exec -T postgres \
+  pg_dump -U postgres -d bidmaster --clean --if-exists --no-owner > /tmp/db_bidmaster.sql
+
+# 2) 业务数据卷（projects / uploads / chroma / miniodata，按你的实际卷增减）
+#    卷名前缀 = compose 项目名，默认取 compose 文件所在目录名 docker；先 docker volume ls 确认
+for v in projects uploads chroma miniodata; do
+  docker run --rm -v "docker_${v}:/data:ro" -v /tmp:/backup alpine \
+    tar -czf "/backup/volume_${v}.tgz" -C /data .
+done
+
+# 3) 源码
+tar -czf /tmp/src.tgz --exclude=venv --exclude=node_modules --exclude=.pgsql .
+#    docker/.env.docker 里有 LLM/RAG Key，单独传，别混进代码压缩包，更不要提交到任何仓库
+```
+
+### 10.3 新主机：导入
+
+```bash
+# 1) 装 Docker 与 compose v2，源码放到 /srv/your-app（路径随意）
+curl -fsSL https://get.docker.com | sh && systemctl enable --now docker
+
+# 2) 放好两个环境文件：根 .env（BMP_*）与 docker/.env.docker，对照关系见 §2 的表格。
+#    要换库密码，必须在【postgres 第一次启动之前】改好：POSTGRES_PASSWORD 只在数据卷为空时生效。
+
+# 3) 先起基础设施，再恢复数据库
+docker compose -f docker/docker-compose.yml --env-file docker/.env.docker --profile infra up -d
+docker compose -f docker/docker-compose.yml exec -T postgres psql -U postgres -c "CREATE DATABASE bidmaster;"
+docker compose -f docker/docker-compose.yml exec -T postgres psql -U postgres -d bidmaster < /tmp/db_bidmaster.sql
+
+# 4) 恢复业务数据卷（卷必须先存在，容器起过后即有）
+for v in projects uploads chroma miniodata; do
+  docker run --rm -v "docker_${v}:/data" -v /tmp:/backup alpine \
+    sh -c "cd /data && tar -xzf /backup/volume_${v}.tgz"
+done
+
+# 5) 起应用与站点
+docker compose -f docker/docker-compose.yml --env-file docker/.env.docker up -d
+docker compose -f docker/docker-compose.yml --env-file docker/.env.docker --profile web up -d
+```
+
+搬过去的是**空库**（不要历史数据）时，跳过第 3 步的 `pg_dump` 恢复，只建库；表由 `db/init_pg.sql` +
+启动时 `init_db()` 的 `create_all` 建出（实测 22 张），再跑一次 `deploy/seed_admin.py` 建管理员（见 §2 第 5 步）。
+
+### 10.4 搬完逐条核对
+
+```bash
+curl -s -o /dev/null -w 'health=%{http_code}\n' http://127.0.0.1/api/health          # 期望 200
+curl -s -o /dev/null -w 'auth=%{http_code}\n'   http://127.0.0.1/api/format/templates # 期望 401
+docker exec docker-postgres-1 psql -U postgres -d bidmaster -tAc \
+  "select 'users='||count(*) from users union all select 'projects='||count(*) from projects"
+```
+
+行数与老库一致、能登录、能完整导出一次 Word，才算迁移成功。
+
+### 10.5 日常上线（无脚本版）
+
+```bash
+cd <仓库根目录> && git pull
+docker compose -f docker/docker-compose.yml --env-file docker/.env.docker up -d --build api celery-worker celery-beat
+curl -s -o /dev/null -w 'health=%{http_code}\n' http://127.0.0.1/api/health
+```
+
+> 维护者自己的生产环境另有一套自动化脚本（构建时打 `rollback-<时间戳>` 镜像、验证失败自动回滚、每日备份、
+> 前端看门狗），属私有资产、不随本仓库发布；上面这段就是它的最小等价替代。
