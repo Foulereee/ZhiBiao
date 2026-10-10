@@ -83,6 +83,20 @@ no configuration file provided: not found
 
 正确做法是显式指定文件（等价于把工程目录切到 `docker/`）。**不要**再加 `--project-directory .`，那会把 `../` 解析到仓库外。
 
+### 2.2.1 Windows PowerShell 两个必看注意
+
+1. **命令写在一行**。bash 的 `\` 续行在 PowerShell 里不是续行符，会被当成参数传给 docker，报
+   `unknown docker command: "compose \"`。真要换行请用反引号：
+
+   ```powershell
+   docker compose -f docker/docker-compose.yml --env-file docker/.env.docker `
+     --profile infra --profile web up -d --build
+   ```
+
+2. **先启动 Docker Desktop**。CLI 装了但 daemon 没起来时会报
+   `failed to connect to the docker API at npipe:////./pipe/docker_engine ... is the daemon running?`。
+   打开 Docker Desktop，等右下角托盘图标变为运行中再执行。
+
 ### 2.3 步骤
 
 ```powershell
@@ -288,6 +302,8 @@ npm run build       # 产物：packages/desktop/dist
 | 报错 | 原因 | 解决 |
 | --- | --- | --- |
 | `no configuration file provided: not found` | 在仓库根目录跑 compose，而编排文件在 `docker/` | 加 `-f docker/docker-compose.yml` |
+| `unknown docker command: "compose \"` | 复制了 bash 的 `\` 续行；PowerShell 不认 `\`，它被当成参数传给 docker | 命令写在一行，或用反引号 `` ` `` 续行 |
+| `failed to connect to the docker API at npipe:////./pipe/docker_engine ... is the daemon running?` | Docker Desktop 没启动（CLI 装了也一样） | 启动 Docker Desktop，等托盘图标就绪再执行 |
 | `ERROR: file:///D:/ZhiBiao-main does not appear to be a Python project: neither 'setup.py' nor 'pyproject.toml' found` | 当前目录不是仓库根目录（ZIP 解压多套一层） | `cd` 到含 `pyproject.toml` 的那层，见 [§0](#0-先确认仓库根目录) |
 | 根目录出现一个名为 `.env` 的**文件夹** | 挂载 `../.env` 时源文件不存在，Docker 自动建了目录 | 停容器 → 删该目录 → `Copy-Item .env.example .env` → 重启 |
 | `port is already allocated` / 8080 起不来 | 端口被占 | 改 `WEB_PORT` / `API_PORT` / `POSTGRES_PORT` |

@@ -294,8 +294,10 @@ cp docker/.env.docker.example docker/.env.docker  # 在这里填 LLM_API_KEY
 # 编辑 docker/.env.docker：LLM_API_KEY=...（只填根 .env 会被容器内的空默认值覆盖）
 # UVICORN_WORKERS 保持 1（登录态在进程内，多进程会随机 401）
 
-docker compose -f docker/docker-compose.yml --env-file docker/.env.docker \
-  --profile infra --profile web up -d --build
+# ⚠️ 先启动 Docker Desktop（CLI 装了但 daemon 没起来会报 npipe ... is the daemon running?）
+# ⚠️ 命令必须写在一行：PowerShell 不支持 bash 的 "\" 续行，会被当成参数
+#    （报 unknown docker command: "compose \"）；真要换行请用反引号 ` 结尾
+docker compose -f docker/docker-compose.yml --env-file docker/.env.docker --profile infra --profile web up -d --build
 
 # 全新空库建管理员（打印随机密码，只显示一次）
 docker compose -f docker/docker-compose.yml exec api python deploy/seed_admin.py
