@@ -90,3 +90,39 @@
 
 - 见 [1.0.0] 段落，第二轮共删除 5 个放错/重复的图片文件（合计约 3.97 MB）；
   仓库跟踪体积由约 10.7 MB 降至 **7.06 MB（227 个文件）**，其中最大单项仍是前端 logo（2.45 MB，见「已知边界」）。
+
+## [1.0.2] - 2026-10-09
+
+按"下载 ZIP 后照抄文档"的真实路径重跑一遍，修掉三处会直接卡住新部署者的问题，并补一份完整部署手册。
+
+### Added（新增）
+
+- **`DEPLOY.md`：完整部署手册**（README 快速开始已精简并指向它）。包含：
+  ZIP 解压常见的"多套一层目录"判据（`pyproject.toml` 与 `docker/docker-compose.yml` 必须同层）、
+  目录与文件地图（谁读哪个文件）、方式一/方式二逐步命令、两套环境变量表（`docker/.env.docker` 用无前缀名、
+  根 `.env` 用 `BMP_*`）、首次登录与 `seed_admin.py` 用法、停止/升级/数据安全（`down` vs `down -v`）、
+  12 条常见报错对照表、本机实测记录与已知边界。
+
+### Fixed（修复）
+
+- **`docker/docker-compose.yml`**：`UVICORN_WORKERS` 默认值 `2` → **`1`**。登录会话保存在
+  `services/routers/auth.py` 的进程内字典 `_sessions`，多 worker 会让"登录"与后续请求落到不同进程，
+  表现为随机退出登录 / 401（1.0.1 只改了示例文件，编排与镜像里的默认值仍是 2，等于没堵住）。
+- **`docker/Dockerfile.api`**：`CMD` 里的 `--workers ${UVICORN_WORKERS:-2}` → **`:-1`**，与编排保持一致。
+- **`.gitignore`**：补 `docker/.env.docker`、`docker/.env`。此前只有根 `.env` 被忽略，
+  而方式一要求把 `LLM_API_KEY` 填进 `docker/.env.docker` —— 一旦 `git add -A` 就会把真实密钥提交上去。
+- **README 方式一**：改为正确命令
+  `docker compose -f docker/docker-compose.yml --env-file docker/.env.docker --profile infra --profile web up -d --build`。
+  原文档在仓库根目录直接 `docker compose ... up`，必然报 `no configuration file provided: not found`
+  —— 编排文件在 `docker/` 下，且其内部 `../db`、`../skills`、`../templates`、`../.env` 都是相对
+  compose 文件所在目录解析的（所以也不能加 `--project-directory .`）。
+- **README 方式一**：补两个前置步骤 —— 根 `.env` 必须存在（`../.env:/app/.env` 的挂载源缺失时，
+  Docker 会把 `.env` 建成**目录**），以及 Key 必须写进 `docker/.env.docker`
+  （`LLM_API_KEY` 等五个键默认值是空串，会把容器内同名 `BMP_*` 覆盖成空）。
+- **README 方式二**：`start-postgres.bat` 说明纠正 —— 它依赖的 `.pgsql/` 免安装运行时**不在仓库里**
+  （已被 `.gitignore` 排除），全新下载直接运行会提示找不到 `pg_ctl`；补 PowerShell 激活写法与执行策略提示；
+  补 `python deploy/seed_admin.py` 步骤（系统不会自动创建管理员，不跑它就没有账号可登录）。
+
+### Changed（调整）
+
+- README「环境要求」改为方式一/方式二对照表，明确哪些组件只是其中一条路需要。

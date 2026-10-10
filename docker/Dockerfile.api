@@ -112,5 +112,8 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -fsS http://127.0.0.1:8000/api/health || exit 1
 
-# 生产启动：关掉 --reload，多 worker（按 CPU 调整）
-CMD ["sh", "-c", "uvicorn services.main:app --host 0.0.0.0 --port ${BMP_PORT:-8000} --workers ${UVICORN_WORKERS:-2} --no-access-log"]
+# 生产启动：关掉 --reload。
+# worker 默认 1：登录会话保存在 services/routers/auth.py 的进程内字典 _sessions 中，
+# 多 worker 会让「登录」与后续请求落到不同进程 → 随机退出登录 / 401。
+# 要提升并发请先把会话迁到 Redis，再用 UVICORN_WORKERS 调整。
+CMD ["sh", "-c", "uvicorn services.main:app --host 0.0.0.0 --port ${BMP_PORT:-8000} --workers ${UVICORN_WORKERS:-1} --no-access-log"]

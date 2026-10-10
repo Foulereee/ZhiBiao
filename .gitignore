@@ -2,6 +2,9 @@
 .env
 .env.local
 .env.*.local
+# 方式一的 compose 插值文件（里面有 LLM_API_KEY 等真实密钥，绝不能入库）
+docker/.env
+docker/.env.docker
 
 # ===== Python =====
 __pycache__/

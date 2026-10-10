@@ -270,67 +270,83 @@ python tools/font_normalize_evidence.py ./out       # 连同样例 docx 一起�
 
 ### 环境要求
 
-- **Python**: 3.12+（本仓库已在 **3.14.2** 上完成实机验证）
-- **Node.js**: 18+（验证时使用 24.12.0 / npm 11.6.2）
-- **PostgreSQL**: 16+（验证时使用便携版 PostgreSQL 16）
-- **Redis**: 7+（**只跑 API 可以不装**，仅 Celery 异步任务需要）
-- **Docker & Docker Compose**（方式一，推荐）
+| 组件 | 方式一（Docker） | 方式二（本地开发） |
+| --- | --- | --- |
+| Docker + Compose v2 | **必需** | 可选（只用它起 PG/Redis/MinIO） |
+| Python 3.12+（实测 3.14.2） | 镜像内自带 | **必需** |
+| Node.js 18+（实测 24.12.0） | 镜像内自带 | **必需** |
+| PostgreSQL 16+ | 容器自带 | **必需**（仓库不含数据库） |
+| Redis 7+ | 容器自带 | 可选，仅 Celery 需要 |
+
+> 逐步命令、环境变量表、目录地图、首次登录与报错排查见 **[DEPLOY.md](DEPLOY.md)**。
 
 ### 方式一：Docker 部署（推荐）
 
 ```bash
-# 1. 克隆项目
-git clone https://github.com/Foulereee/ZhiBiao.git
+git clone https://github.com/Foulereee/ZhiBiao.git   # 或用 GitHub 的 Download ZIP
 cd ZhiBiao
 
-# 2. 配置环境变量（示例文件在 docker/ 下）
-cp docker/.env.docker.example docker/.env.docker
-# 编辑：填 LLM_API_KEY 等；UVICORN_WORKERS 保持 1（登录态在进程内，多进程会随机 401）
+# 关键：compose 文件在 docker/ 下，它内部的 ../db、../skills、../.env 都相对 docker/ 解析，
+#       所以必须用 -f 指定文件；在仓库根目录直接 docker compose up 会报
+#       "no configuration file provided: not found"
+cp .env.example .env                              # 必须存在，否则 Docker 会把 .env 建成一个目录
+cp docker/.env.docker.example docker/.env.docker  # 在这里填 LLM_API_KEY
+# 编辑 docker/.env.docker：LLM_API_KEY=...（只填根 .env 会被容器内的空默认值覆盖）
+# UVICORN_WORKERS 保持 1（登录态在进程内，多进程会随机 401）
 
-# 3. 启动全套（PostgreSQL / Redis / MinIO / api / celery / nginx 站点）
-docker compose --profile infra --profile web up -d --build
-# 不加 --profile 时只会启动 api + celery-worker + celery-beat（直连外部 PG/Redis/MinIO），
-# 详见 docker-compose.yml 顶部注释
+docker compose -f docker/docker-compose.yml --env-file docker/.env.docker \
+  --profile infra --profile web up -d --build
+
+# 全新空库建管理员（打印随机密码，只显示一次）
+docker compose -f docker/docker-compose.yml exec api python deploy/seed_admin.py
 ```
 
-启动后自动运行：PostgreSQL (5432) / Redis (16379→6379) / MinIO (19000，控制台 19001) / FastAPI (8000) / Celery Worker + Beat / nginx 站点
+启动后：PostgreSQL (5432) / Redis (16379→6379) / MinIO (19000，控制台 19001) / FastAPI (8000) / Celery Worker + Beat / nginx 站点
 
 - **B/S 网站入口**: `http://<主机IP>:8080/`（`WEB_PORT` 可改为 80）
 - API 文档: http://localhost:8000/docs
 - 前端无需手工构建：`Dockerfile.web` 内已执行 `npm run build`，产物直接交给 nginx
+- 不加 `--profile` 时只启动 api + celery-worker + celery-beat（直连外部 PG/Redis/MinIO）
 
 ### 方式二：本地开发
 
 ```bash
-# 1) 后端依赖
+# 1) 后端依赖（必须在含 pyproject.toml 的仓库根目录执行）
 python -m venv venv
-venv\Scripts\activate            # Windows；Linux/macOS 用 source venv/bin/activate
-pip install -e .                 # 已在 Python 3.14.2 实测：218 个包安装成功
+.\venv\Scripts\Activate.ps1    # Windows PowerShell；被策略拦住时先执行
+                                  # Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+pip install -e .                  # 实测 Python 3.14.2：218 个包安装成功
 
 # 2) 前端依赖
 cd packages/desktop && npm install && cd ../..
 
-# 3) 基础设施
-start-postgres.bat               # Windows：仓库自带便携 PostgreSQL 启停脚本（另有 stop-postgres.bat）
-# 其他平台或本机已有 Docker：
+# 3) 基础设施（三选一）
+#   a) 只用 Docker 起依赖（推荐）
 docker compose -f docker/docker-compose.yml --profile infra up -d postgres redis minio
+#   b) 本机已装 PostgreSQL / Redis：确认服务已启动（PG 监听 5432）
+#   c) start-postgres.bat：仅当你自己放了便携 PostgreSQL 到 .pgsql/extracted/pgsql/ 时才可用
+#      （.pgsql/ 不在仓库里，全新下载直接运行会提示找不到 pg_ctl）
 
-# 4) 配置：.env 要放在**启动命令所在目录**（pydantic 的 env_file=".env" 是相对 CWD 的）
+# 4) 配置：.env 要放在**启动命令所在目录**（pydantic 的 env_file=".env" 相对 CWD）
 cp .env.example .env
-# 至少改 BMP_DATABASE_URL；BMP_LLM_API_KEY 填你自己的；Redis 只有跑 Celery 时才必须
+# 至少改 BMP_DATABASE_URL；BMP_LLM_API_KEY 填你自己的（API_BASE 须与 Key 同源）；Redis 只有跑 Celery 才必须
 
-# 5) 初始化数据库（二选一）
+# 5) 初始化数据库
+createdb -U postgres bidmaster                    # 或 psql -U postgres -c "CREATE DATABASE bidmaster;"
 psql -U postgres -d bidmaster -f db/init_pg.sql   # 建 11 张基础表
 # 其余表由应用启动时的 init_db() → Base.metadata.create_all 自动补齐（实测共 22 张）
 # ⚠️ 不要用 alembic upgrade head：alembic.ini 指向 db/migrations，而仓库里并没有这个目录
 
-# 6) 启动后端
+# 6) 启动后端（在仓库根目录执行）
 uvicorn services.main:app --reload --host 0.0.0.0 --port 8000
 
-# 7) 启动 Celery（需要 Redis；Windows 用 solo 池）
+# 7) 建管理员（另开终端；系统不会自动创建账号）
+python deploy/seed_admin.py
+
+# 8) 启动 Celery（需要 Redis；Windows 用 solo 池）
 celery -A services.celery_app worker --loglevel=info --pool=solo
 
-# 8) 启动前端
+# 9) 启动前端
 cd packages/desktop
 npm run dev                      # ⚠️ 端口是 vite.config.ts 里写死的 15168，不是 5173
 #    浏览器打开 http://localhost:15168/ ；/api 默认反代到 http://localhost:8000
