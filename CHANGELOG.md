@@ -179,4 +179,9 @@
   - 另修一处安全隐患：`stop-postgres.bat` 的兜底从 `taskkill /IM postgres.exe /F`
     （按进程名杀，会连带杀掉同机**其它** PostgreSQL 实例，包括生产库）改为只结束本数据目录
     `postmaster.pid` 中记录的 PID。
-  - `install.ps1` 同步改为**优先直接用** `pg_ctl -D <data> -l <log> -w start` 起库，不再依赖 bat。
+  - `install.ps1` 同步改为**优先直接用** `pg_ctl -D <data> -l <log> -w start` 起库，不再依赖 bat。- **README「快速开始」重写为完整部署流程**：新增「前置环境对照表」（三种方式 × 组件 / 权限 / 端口 / 磁盘 / 外网）、
+  一键脚本参数表与 8 步动作表、方式一的 Docker 前置（WSL2/Hyper-V）与**两个 env 文件的分工表**、方式二前置说明，
+  以及两个通用新章节：「🔑 首次登录与校验」（seed_admin 幂等语义、`admin123` 初值提示、校验清单与期望值）、
+  「🛑 停止、重启与升级」（含 `docker compose down -v` 等于删库的警告）。
+- `install.ps1`：`-DevPort` 现在**真正生效**（显式给 vite 传 `--port <n> --strictPort`；此前只改了探测地址，
+  vite 仍用配置里写死的 15168），因此可在不影响已有实例的前提下于独立端口再部署一套。

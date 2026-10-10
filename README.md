@@ -270,68 +270,141 @@ python tools/font_normalize_evidence.py ./out       # 连同样例 docx 一起�
 
 ## 🚀 快速开始
 
-### 环境要求
+### 0. 前置环境（先看这张表再动手）
 
-| 组件 | 方式一（Docker） | 方式二（本地开发） |
-| --- | --- | --- |
-| Docker + Compose v2 | **必需** | 可选（只用它起 PG/Redis/MinIO） |
-| Python 3.12+（实测 3.14.2） | 镜像内自带 | **必需** |
-| Node.js 18+（实测 24.12.0） | 镜像内自带 | **必需** |
-| PostgreSQL 16+ | 容器自带 | **必需**（仓库不含数据库） |
-| Redis 7+ | 容器自带 | 可选，仅 Celery 需要 |
+| 组件 | ⚡ 一键脚本（Windows） | 方式一：Docker 部署 | 方式二：本地开发 |
+| --- | --- | --- | --- |
+| 操作系统 | Windows 10/11 + Windows PowerShell 5.1（已实测） | Windows / Linux / macOS | Windows / Linux / macOS |
+| Docker Desktop + Compose v2 | 可选：**有则走 Docker，没有就自动回落本地开发** | **必需**；Windows/macOS 需先启用 **WSL2/Hyper-V**（管理员 `wsl --install` 后重启） | 可选：只用它起 PG / Redis / MinIO |
+| Python | **必需** 3.12+（实测 3.14.2） | 镜像自带 | **必需** 3.12+ |
+| Node.js + npm | **必需** 18+（实测 24.12.0） | 镜像自带（构建前端产物） | **必需** 18+ |
+| PostgreSQL 16+ | **必需**：本机服务，或用便携版 + `-PgRoot` 指定 | 容器自带 | **必需**（仓库**不含**数据库文件） |
+| Redis 7+ | 可选：只有 Celery 定时任务需要 | 容器自带 | 可选 |
+| 磁盘 / 内存 | ≈3 GB（含便携 PostgreSQL 约 2.5 GB） | ≈6 GB / 4 GB RAM | ≈3 GB |
+| 管理员权限 | **不需要** | 安装 Docker / 启用 WSL2 时需要 | **不需要** |
+| 需空闲端口 | 8000 API、15168 前端、5432 PG（均可参数改） | 8080 站点、8000 API、5432、16379、19000、19001 | 8000、15168、5432 |
+| 外网 | 装依赖需要（pip / npm） | 拉镜像 + 装依赖需要 | 装依赖需要 |
 
-> 逐步命令、环境变量表、目录地图、首次登录与报错排查见 **[DEPLOY.md](DEPLOY.md)**。
+**通用注意（三条最容易踩的）**
+
+1. Windows 脚本若提示"禁止运行脚本"，在**当前窗口**放开一次即可，不改全局策略：
+   `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`
+2. 系统**不会自动创建管理员**，必须跑一次 `deploy/seed_admin.py`（一键脚本会自动执行这一步）。
+3. `UVICORN_WORKERS` 必须为 **1**：登录态存在进程内字典（`services/routers/auth.py`），多进程会导致随机 401。
+
+> 逐步命令、环境变量全集、目录地图、**按报错查原因**见 **[DEPLOY.md](DEPLOY.md)**。
 
 ### ⚡ 一键安装（Windows，建议先试这个）
 
-仓库自带 PowerShell 脚本，**自动判断**该走 Docker 还是本地开发，并把「装依赖 → 起数据库 → 建库建表 → 建管理员 → 起服务 → 健康检查」一次做完：
+仓库自带 PowerShell 脚本，**自动判断**该走 Docker 还是本地开发，并把「装依赖 → 起数据库 → 建库建表 → 建管理员 → 起服务 → 健康检查」一次做完（幂等，可反复执行）：
 
 ```powershell
-cd <仓库根目录>          # 含 pyproject.toml 的那一层，不确定就先看 DEPLOY.md §0
-.\install.ps1            # 自动判断；会提示输入 LLM API Key（可回车跳过）
+cd <仓库根目录>                        # 含 pyproject.toml 的那一层；不确定先看 DEPLOY.md §0
 
-.\install.ps1 -Mode local -LlmApiKey sk-xxx -Yes      # 强制本地开发，非交互
-.\install.ps1 -Mode docker -SitePort 80 -Yes          # 强制 Docker 部署
-.\install.ps1 -SkipFrontend -NoStart                  # 只准备环境，不装前端、不起服务
-.\stop.ps1                                            # 停本地服务；-Docker 停容器，-WithPg 连数据库一起停
+.\install.ps1                          # 自动判断：Docker 可用走 Docker，否则走本地开发
+.\install.ps1 -LlmApiKey sk-xxx -Yes   # 顺带把 LLM Key 写进配置，非交互
+.\install.ps1 -Mode local -Yes         # 强制本地开发
+.\install.ps1 -Mode docker -SitePort 80 -Yes
+.\install.ps1 -DbName bidmaster_dev -ApiPort 8010 -DevPort 15178   # 换库名 / 端口（避开已占用）
+.\install.ps1 -PgRoot D:\.pgsql        # 指定便携 PostgreSQL 根目录（其下有 extracted\pgsql\bin 与 data）
+.\install.ps1 -AdminEmail me@corp.com -AdminPassword '强密码'
+.\install.ps1 -SkipFrontend -NoStart   # 只准备环境：不装前端、不起服务
+.\stop.ps1                             # 停本地服务；-Docker 停容器；-WithPg 连数据库一起停
 ```
 
-- **幂等**：可重复执行；已存在的 `.env` / `docker\.env.docker` 默认保留，`-Force` 才重建（会先备份）。
-- **Docker 引擎不可用时会说清楚原因**（Docker Desktop 没启动 / 未启用 WSL2-Hyper-V），自动模式随即回落到本地开发。
-- **没装 PostgreSQL 时给出三种获取方式**（含本机便携版路径 `-PgRoot`）。
-- 全程日志写在 `logs\install-*.log`；主机名、端口、库名、管理员账号都能用参数改。
+**参数一览**
 
-### 方式一：Docker 部署（推荐）
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `-Mode` | `auto` | `auto` / `docker` / `local` |
+| `-LlmApiKey` / `-LlmApiBase` | 空（会交互询问） | 写进 `.env`（本地）或 `docker\.env.docker`（Docker） |
+| `-DbName` | `bidmaster` | 数据库名，不存在则自动创建 |
+| `-PgUser` / `-PgPassword` / `-PgPort` | `postgres` / `postgres` / `5432` | 数据库连接信息 |
+| `-ApiPort` / `-SitePort` / `-DevPort` | `8000` / `8080` / `15168` | API 端口 / Docker 站点端口 / vite 开发端口 |
+| `-PgRoot` | `<仓库>\.pgsql` | 便携 PostgreSQL 根目录 |
+| `-AdminEmail` / `-AdminPassword` | `admin@bidmaster.pro` / 随机 16 位 | 传给 `deploy/seed_admin.py` |
+| `-SkipFrontend` / `-NoStart` | 关 | 只准备环境，不装前端 / 不起服务 |
+| `-Force` / `-Yes` | 关 | 重建 `.env`（会先备份）/ 全自动不询问 |
+
+**它在这 8 步里具体做了什么**（Windows PowerShell 5.1 实测通过，完整输出见下方「实机验证记录」）
+
+| 步骤 | 动作 | 关键点 |
+| --- | --- | --- |
+| 0 | 校验仓库根目录 | 找不到 `pyproject.toml` 直接报错，避免在错误目录里乱装 |
+| 1 | 检查 Python ≥ 3.12 | 缺失时给出下载地址 |
+| 2 | 建 `venv` + `pip install -e .` | 已存在则复用（实测 218 个包） |
+| 3 | `npm install`（`packages\desktop`） | 已有 `node_modules` 则跳过 |
+| 4 | 准备 PostgreSQL | 端口已监听则跳过；否则 `pg_ctl -D <data> -l <log> -w start`；找不到 PostgreSQL 会给三种获取方式 |
+| 5 | 建库 + 建表 | `CREATE DATABASE` → `psql -f db/init_pg.sql`（幂等）→ `init_db()` 补齐：实测 **22 张表** |
+| 6 | 生成 `.env` | 已存在默认**保留**（`-Force` 才重建、重建前备份）；库地址指向本次 `-DbName` |
+| 7 | 建管理员 | `deploy/seed_admin.py`，幂等；**已存在的账号不会改密码** |
+| 8 | 起服务 + 健康检查 | 轮询 `/api/health` 与前端首页，就绪后打印访问地址 |
+
+- **Docker 引擎不可用时会说清楚原因**（Docker Desktop 没启动 / 未启用 WSL2-Hyper-V）并打印处理步骤；`-Mode auto` 随即回落到本地开发。
+- 全程日志写在 `logs\install-*.log`，另分 `api.err.log`、`web.err.log`、`postgres.log`。
+- 装完会打印：站点 `http://127.0.0.1:15168/`、API 文档 `/docs`、健康检查 `/api/health`，以及管理员邮箱。
+
+### 方式一：Docker 部署（推荐，Linux 服务器首选）
+
+**前置**：Docker Engine 24+ 与 Compose v2（`docker compose version` 有输出即可）。Windows / macOS 用 Docker Desktop，
+但**必须先启用 WSL2**（管理员执行 `wsl --install` 后**重启**）或「虚拟机平台 + 适用于 Linux 的 Windows 子系统」，
+否则会报 `Error response from daemon: Docker Desktop is unable to start`；Linux 用官方脚本装 Engine + compose-plugin 即可。
+
+**两个 env 文件的分工**（最容易搞错的地方）
+
+| 文件 | 变量前缀 | 谁读它 | 关键项 |
+| --- | --- | --- | --- |
+| `docker/.env.docker` | 无前缀（`LLM_API_KEY`） | **compose 插值** | `LLM_API_KEY`、`LLM_API_BASE`、`UVICORN_WORKERS=1`、`WEB_PORT`、`POSTGRES_PASSWORD` |
+| `.env`（仓库根） | `BMP_`（`BMP_LLM_API_KEY`） | 应用（pydantic），bind-mount 到容器 `/app/.env` | `BMP_DATABASE_URL`、`BMP_LLM_API_KEY`、`BMP_ALLOWED_ORIGINS` |
+
+> ⚠️ 只填根 `.env` 不生效：compose 里同名变量的**空默认值**（如 `LLM_API_KEY=`）会把容器内环境变量覆盖成空，
+> 所以 LLM Key 必须在 `docker/.env.docker` 里也填一份。
 
 ```bash
 git clone https://github.com/Foulereee/ZhiBiao.git   # 或用 GitHub 的 Download ZIP
 cd ZhiBiao
 
-# 关键：compose 文件在 docker/ 下，它内部的 ../db、../skills、../.env 都相对 docker/ 解析，
+# 关键：compose 文件在 docker/ 下，它内部的 ../db、../skills、../templates、../.env 都相对 docker/ 解析，
 #       所以必须用 -f 指定文件；在仓库根目录直接 docker compose up 会报
-#       "no configuration file provided: not found"
+#       "no configuration file provided: not found"（也不要加 --project-directory .）
 cp .env.example .env                              # 必须存在，否则 Docker 会把 .env 建成一个目录
 cp docker/.env.docker.example docker/.env.docker  # 在这里填 LLM_API_KEY
-# 编辑 docker/.env.docker：LLM_API_KEY=...（只填根 .env 会被容器内的空默认值覆盖）
-# UVICORN_WORKERS 保持 1（登录态在进程内，多进程会随机 401）
+# 编辑 docker/.env.docker：LLM_API_KEY=...、LLM_API_BASE=https://api.deepseek.com、UVICORN_WORKERS=1
+# 编辑 .env：BMP_LLM_API_KEY / BMP_LLM_API_BASE（兜底）、BMP_DATABASE_URL（改过 PG 密码要同步改）
 
 # ⚠️ 先启动 Docker Desktop（CLI 装了但 daemon 没起来会报 npipe ... is the daemon running?）
 # ⚠️ 命令必须写在一行：PowerShell 不支持 bash 的 "\" 续行，会被当成参数
 #    （报 unknown docker command: "compose \"）；真要换行请用反引号 ` 结尾
 docker compose -f docker/docker-compose.yml --env-file docker/.env.docker --profile infra --profile web up -d --build
-
-# 全新空库建管理员（打印随机密码，只显示一次）
-docker compose -f docker/docker-compose.yml exec api python deploy/seed_admin.py
 ```
 
-启动后：PostgreSQL (5432) / Redis (16379→6379) / MinIO (19000，控制台 19001) / FastAPI (8000) / Celery Worker + Beat / nginx 站点
+启动后的容器：PostgreSQL (5432) / Redis (16379→6379) / MinIO (19000，控制台 19001) / FastAPI (8000) / Celery Worker + Beat / nginx 站点
 
-- **B/S 网站入口**: `http://<主机IP>:8080/`（`WEB_PORT` 可改为 80）
-- API 文档: http://localhost:8000/docs
-- 前端无需手工构建：`Dockerfile.web` 内已执行 `npm run build`，产物直接交给 nginx
-- 不加 `--profile` 时只启动 api + celery-worker + celery-beat（直连外部 PG/Redis/MinIO）
+| 组件 | 地址 / 说明 |
+| --- | --- |
+| **B/S 网站入口** | `http://<主机IP>:8080/`（`WEB_PORT` 可改为 80） |
+| API 文档 | `http://<主机IP>:8000/docs` |
+| 健康检查 | `http://<主机IP>:8000/api/health` |
+| 前端产物 | 无需手工构建：`Dockerfile.web` 内已执行 `npm run build`，产物直接交给 nginx |
+| 不加 `--profile` | 只启动 api + celery-worker + celery-beat（直连外部 PG/Redis/MinIO） |
+
+**首次建管理员与登录** → 见「🔑 首次登录与校验」；**停止 / 重启 / 升级** → 见「🛑 停止、重启与升级」。
+
+日常运维（生产同理，`-f` 与 `--env-file` 都带着）：
+
+```bash
+docker compose -f docker/docker-compose.yml ps                # 看容器状态
+docker compose -f docker/docker-compose.yml logs -f api       # 看 API 日志
+docker compose -f docker/docker-compose.yml restart api       # 改完配置只重启 API
+docker compose -f docker/docker-compose.yml exec api python deploy/seed_admin.py   # 建 / 查管理员
+docker compose -f docker/docker-compose.yml stop              # 停止（保留容器与数据卷）
+```
 
 ### 方式二：本地开发
+
+**前置**：Python 3.12+（实测 3.14.2）、Node.js 18+（实测 24.12.0），以及一个可用的 PostgreSQL 16 —— 本机服务、
+Docker 容器、便携版**三选一**；Redis 只有 Celery 定时任务需要。Windows 上更省事的做法是直接跑上面的「⚡ 一键安装」，
+它会把下面 9 步自动化，并负责起库、建表、建管理员、健康检查。
 
 ```bash
 # 1) 后端依赖（必须在含 pyproject.toml 的仓库根目录执行）
@@ -379,6 +452,66 @@ npm run dev                      # ⚠️ 端口是 vite.config.ts 里写死的 
 npm run electron:dev
 ```
 
+- **Windows 用户**：上面 9 步 ≈ `.\install.ps1 -Mode local`，后者还会自动起 PostgreSQL、建表、建管理员并做健康检查。
+- `.pgsql\` **不在仓库里**，所以 `start-postgres.bat` 只有你自己放了便携 PostgreSQL（`.pgsql\extracted\pgsql\bin` + `.pgsql\data`）后才可用。
+  两个 bat 已改为 **ASCII-only**：**不要再往里加 `chcp 65001`**，否则 cmd 会按切换前的代码页重算偏移、丢掉其后所有行（脚本会静默不干活）。
+- 首次登录与自测见「🔑 首次登录与校验」；停止见「🛑 停止、重启与升级」。
+- 常见报错（`no configuration file provided`、`does not appear to be a Python project`、`relation "projects" does not exist`、`value too long for character varying(36)`…）→ [DEPLOY.md](DEPLOY.md) §6 对照表。
+
+### 🔑 首次登录与校验（三种方式通用）
+
+系统**不会自动创建管理员**，必须跑一次初始化脚本：
+
+```powershell
+# 本地开发 / 一键脚本（Windows，在仓库根目录）
+.\venv\Scripts\python.exe deploy\seed_admin.py
+# Linux / macOS
+python deploy/seed_admin.py
+# Docker
+docker compose -f docker/docker-compose.yml exec api python deploy/seed_admin.py
+```
+
+`seed_admin.py` 幂等（27 权限 / 4 角色 / 1 管理员）：
+
+- **新账号**：脚本会打印一个**随机 16 位密码，只显示这一次** → 请立刻记下；
+- **账号已存在**：脚本**不会改动密码**（换密码请改库里的 `password_hash`，或删号后重跑）。
+
+默认账号 `admin@bidmaster.pro`；`db/init_pg.sql` 预置的管理员初始密码是 **`admin123`**，**首次登录后请立刻修改**。
+
+**校验清单**（把端口换成你自己的：本地 `8000`/`15168`，Docker `8000`/`8080`）
+
+```powershell
+curl.exe http://127.0.0.1:8000/api/health        # 期望 {"status":"ok",…,"db_ready":true}
+curl.exe -o NUL -w "%{http_code}" http://127.0.0.1:8000/api/projects/    # 无 token → 期望 401
+
+# 登录拿 64 位会话 token
+$r = Invoke-RestMethod http://127.0.0.1:8000/api/auth/login -Method POST `
+     -ContentType 'application/json' -Body (@{email='admin@bidmaster.pro';password='admin123'} | ConvertTo-Json)
+$r.token.Length                                   # 期望 64
+```
+
+| 检查项 | 期望结果 |
+| --- | --- |
+| 站点首页 | 本地 `http://127.0.0.1:15168/`；Docker `http://<主机IP>:8080/`；页面标题「智标」 |
+| API 文档 | `http://127.0.0.1:8000/docs` 可打开 |
+| 健康检查 | `{"status":"ok",…,"db_ready":true}` |
+| 表结构 | `public` 下 **22 张表**（`init_pg.sql` 建 17 张，`init_db()` 补齐） |
+| 角色权限 | `rbac_role_permissions` **72 行**（admin 27 / 项目经理 25 / 撰写 13 / 审核 7） |
+| 鉴权 | 带 token 200；不带 token 401 |
+| 线上参考 | `http://39.106.251.153/` → HTTP 200 |
+
+### 🛑 停止、重启与升级
+
+| 方式 | 停止 | 重启 / 更新 |
+| --- | --- | --- |
+| 一键脚本 / 本地开发 | `.\stop.ps1`（`-ApiPort`/`-DevPort` 换端口；`-WithPg` 连便携数据库一起停） | 再跑一次 `.\install.ps1`（幂等，已装好的会跳过） |
+| Docker | `docker compose -f docker/docker-compose.yml stop` | `… up -d --build` 重新构建；只改配置用 `… restart api` |
+| Docker 彻底清理 | `… down` | ⚠️ 加 `-v` 会**删除数据卷（等于删库）**，生产上不要随手执行 |
+| 代码更新 | — | `git pull`：Docker 再 `… up -d --build`；本地重启 API 与前端即可 |
+
+- 日志：本地 `logs\`（`install-*.log`、`api.out/err.log`、`web.out/err.log`、`postgres.log`）；Docker 用 `… logs -f api`
+- 按报错查原因：[DEPLOY.md](DEPLOY.md) §6（常见报错对照表）、§7（数据库）、§9（一键脚本）
+
 ### ✅ 本仓库的实机验证记录
 
 以下结果在 Windows 11 + Python 3.14.2 + Node 24.12.0 + 便携 PostgreSQL 16 上跑出来，
@@ -395,7 +528,7 @@ npm run electron:dev
 | 方式二 · 前端构建 | ✅ | `npm run build`（tsc + vite）16.4s 通过，产物 `dist/index.html` + `index-*.js`（1.70 MB / gzip 525 KB） |
 | 方式二 · 前端 dev | ✅ | `npm run dev` 起在 **15168**，页面返回 `<title>智标</title>` |
 | 方式二 · Celery | ✅ | 本机用 fakeredis 提供 RESP 兼容服务：worker 连上 broker、Lua 锁脚本执行成功、打印 `celery@R ready.`，并注册 `run_batch_format` / `run_full_check` / `run_news_monitor` 三个任务（真 Redis 下同理，本次未跑任务消费） |
-| ⚡ 一键脚本 `install.ps1` | ✅ | 在**干净副本**里用 Windows PowerShell 5.1 跑通全流程：venv + `pip install -e .` → `npm install` → 起便携 PostgreSQL → 建库 → `init_pg.sql` **0 报错** → `init_db()` **22 张表** → 建管理员 → API `/api/health` 就绪 → 前端 15168 就绪；`stop.ps1` 按端口停掉 API 与前端（8000/15168 均已释放）。Docker 引擎不可用时自动回落本地，并打印 WSL2/Hyper-V 的处理办法 |
+| ⚡ 一键脚本 `install.ps1` | ✅ | **独立端口 + 全新库实测（Windows PowerShell 5.1）**：①干净副本 `-Mode auto -DbName bidmaster_e2e -ApiPort 8010 -DevPort 15178` → 自动识别 Docker 引擎不可用、打印 WSL2/Hyper-V 处理办法后**回落本地** → venv + `pip install -e .` → `npm install` → 起便携 PostgreSQL → **新建库** → `init_pg.sql` **0 报错** → `init_db()` **22 张表** → 生成 `.env`（库地址指向本次 `-DbName`）→ 建管理员 → API `/api/health` 200（`db_ready:true`）→ 前端 15178 就绪（`<title>智标</title>`）；登录返回 **64 位** token、带 token 200 / 不带 401、`rbac_role_permissions` **72 行**。②**幂等复跑**：venv 复用、`node_modules` 跳过、表与绑定行数不变（22 / 72）。③`stop.ps1 -ApiPort 8010 -DevPort 15178` 精确停掉 API 与 vite 进程，8010/15178 释放为 0，另一套 8000/15168 不受影响。④`-Mode docker` 在缺 WSL2 的机器上给出处理办法后中止（同一编排 `docker compose config --quiet` → **exit 0**） |
 | 字体归一化 | ✅ | `tools/font_normalize_evidence.py`：缺 `w:eastAsia` 的 run **5 → 0**（见上方实测表） |
 | 方式一 · Docker | ⚠️ 未能实机跑通 | 验证机装了 Docker Desktop（CLI 29.8.2 / compose v5.5.1，`docker compose config --quiet` 对整套编排**校验通过，exit 0**），但本机 **WSL2 未安装、`HypervisorPresent=False`**，引擎起不来（`Error response from daemon: Docker Desktop is unable to start`）。**线上正是这套 compose 在跑**（`http://39.106.251.153/` → HTTP 200），可作为长期运行证据 |
 

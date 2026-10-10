@@ -394,7 +394,9 @@ function Install-Local {
     }
     if (-not $SkipFrontend -and (Have 'npm') -and -not (Test-Port '127.0.0.1' $DevPort)) {
         $env:VITE_API_TARGET = "http://127.0.0.1:$ApiPort"
-        Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', 'npm run dev' `
+        # vite 的端口在 vite.config.ts 里写死为 15168，这里显式覆盖，让 -DevPort 真正生效
+        $webCmd = "npm run dev -- --port $DevPort --strictPort"
+        Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $webCmd `
             -WorkingDirectory (Join-Path $script:Root 'packages\desktop') -WindowStyle Hidden `
             -RedirectStandardOutput (Join-Path $script:LogDir 'web.out.log') `
             -RedirectStandardError (Join-Path $script:LogDir 'web.err.log')
