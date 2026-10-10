@@ -232,22 +232,24 @@ function Ensure-Postgres {
     } else {
         $bat = Join-Path $script:Root 'start-postgres.bat'
         if ($PgRoot) { $dataDir = Join-Path $PgRoot 'data' } else { $dataDir = Join-Path $script:Root '.pgsql\data' }
-        if ((Test-Path $bat) -and (Test-Path $dataDir) -and -not $PgRoot) {
+        if ($bin) {
+            # 优先直接用 pg_ctl：实测仓库自带的 start-postgres.bat 在中文 Windows 上会因
+            # "UTF-8 批处理 + 中途 chcp 65001" 被 cmd 丢掉后续语句而**静默不干活**。
+            $pgctl = Join-Path $bin 'pg_ctl.exe'
+            $log = Join-Path $script:LogDir 'postgres.log'
+            Info "启动 PostgreSQL：pg_ctl -D `"$dataDir`" -l `"$log`" -w start"
+            $p = Start-Process -FilePath $pgctl -ArgumentList @('-D', $dataDir, '-l', $log, '-w', 'start') -NoNewWindow -PassThru `
+                -RedirectStandardOutput (Join-Path $script:LogDir 'pg_ctl.out.log') `
+                -RedirectStandardError (Join-Path $script:LogDir 'pg_ctl.err.log')
+            $deadline = (Get-Date).AddSeconds(90)
+            while (-not $p.HasExited -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
+        } elseif ((Test-Path $bat) -and (Test-Path $dataDir)) {
             Info '启动便携 PostgreSQL（start-postgres.bat）…'
             # 关键：不要把被启动进程的 stdout 接进管道 —— postgres 会一直持有那个句柄，脚本会卡死。
             # 统一重定向到日志文件，再用轮询等方式它退出（最多 60 秒，超时也继续走下面的端口探测）。
             $p = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', "`"$bat`"" -NoNewWindow -PassThru `
                 -RedirectStandardOutput (Join-Path $script:LogDir 'pg_start.out.log') `
                 -RedirectStandardError (Join-Path $script:LogDir 'pg_start.err.log')
-            $deadline = (Get-Date).AddSeconds(60)
-            while (-not $p.HasExited -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
-        } elseif ($bin) {
-            $pgctl = Join-Path $bin 'pg_ctl.exe'
-            $log = Join-Path $script:LogDir 'postgres.log'
-            Info "启动 PostgreSQL：pg_ctl -D `"$dataDir`" -l `"$log`" start"
-            $p = Start-Process -FilePath $pgctl -ArgumentList @('-D', $dataDir, '-l', $log, 'start') -NoNewWindow -PassThru `
-                -RedirectStandardOutput (Join-Path $script:LogDir 'pg_ctl.out.log') `
-                -RedirectStandardError (Join-Path $script:LogDir 'pg_ctl.err.log')
             $deadline = (Get-Date).AddSeconds(60)
             while (-not $p.HasExited -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
         } else {

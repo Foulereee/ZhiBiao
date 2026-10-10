@@ -170,4 +170,13 @@
   - 改用 `uuid_generate_v4()::text`（固定 36 字符），幂等性仍由 `ON CONFLICT (role_id, permission_id) DO NOTHING` 保证。
   - 实测（全新空库）：导入 `init_pg.sql` **0 报错**、17 张表、72 行绑定
     （admin 27 / project_manager 25 / writer 13 / reviewer 7）、管理员已绑定 admin 角色；
-    **重复导入仍 0 报错且行数不变**；再执行 `init_db()` 共 22 张表。
+    **重复导入仍 0 报错且行数不变**；再执行 `init_db()` 共 22 张表。- **`start-postgres.bat` / `stop-postgres.bat` 在中文 Windows 上"静默失效"（根因已修）**
+  - 两个 bat 以 UTF-8 保存、却在第 2 行 `chcp 65001`：cmd.exe 会按**切换前的代码页**重新换算文件偏移，
+    切换之后剩余的每一行都被丢弃 —— 脚本一行输出都没有、`pg.log` 也没生成、数据库自然起不来
+    （实测复现；换成 ASCII-only + 无 chcp 的等价脚本后一次成功）。
+  - 已重写为 **ASCII-only、不带 chcp**，并在注释里写明"不要再加 chcp"。
+    实测三个分支：已在运行 / 启动成功 / 停止，全部正常。
+  - 另修一处安全隐患：`stop-postgres.bat` 的兜底从 `taskkill /IM postgres.exe /F`
+    （按进程名杀，会连带杀掉同机**其它** PostgreSQL 实例，包括生产库）改为只结束本数据目录
+    `postmaster.pid` 中记录的 PID。
+  - `install.ps1` 同步改为**优先直接用** `pg_ctl -D <data> -l <log> -w start` 起库，不再依赖 bat。

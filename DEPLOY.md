@@ -314,6 +314,8 @@ npm run build       # 产物：packages/desktop/dist
 | `alembic upgrade head` 报 `Path doesn't exist: db\migrations` | 仓库没有迁移目录 | 用 `psql -f db/init_pg.sql`，其余表由启动时 `create_all` 建 |
 | `psql -f db/init_pg.sql` 刷出一堆 `relation "projects"/"documents" does not exist` | **老版本 `init_pg.sql` 的缺陷**：`projects.tender_doc_id → documents(id)` 与 `documents.project_id → projects(id)` 互相引用，两张表都建不出来，后续 74 条语句级联报错 | 用本仓库当前的 `db/init_pg.sql`（已改为末尾补外键，空库导入 0 报错）；若用的是旧副本，这些报错**可以忽略**——启动 API 时 `init_db()` 会建全 22 张表 |
 | `psql -f db/init_pg.sql` 报 `value too long for type character varying(36)` | **老版本 `init_pg.sql` 的缺陷**：角色-权限绑定用 `'前缀' \|\| p.code` 拼 `id`，最长的超过 36 字符 → 整条 `INSERT ... SELECT` 回滚，RBAC 绑定一行都写不进去 | 用本仓库当前的 `db/init_pg.sql`（改用 `uuid_generate_v4()::text`，实测 72 行绑定且可重复导入）；旧副本可忽略该报错——应用启动时 `rbac.py` 会自行补齐 |
+| 双击 `start-postgres.bat` 一闪而过、数据库没起来（连 `.pgsql\pg.log` 都没生成） | **老版本 bat 的缺陷**：UTF-8 批处理里中途 `chcp 65001`，cmd 会按切换前的代码页重算偏移、丢掉其后所有行 | 用本仓库当前的 bat（已改为 ASCII-only、不带 chcp）；或绕过它直接 `.\.pgsql\extracted\pgsql\bin\pg_ctl.exe -D .pgsql\data -l .pgsql\pg.log -w start` |
+| `stop-postgres.bat` 把同机其它 PostgreSQL 实例也停了 | 老版本兜底按进程名执行 `taskkill /IM postgres.exe /F` | 用当前版本：只结束本数据目录 `postmaster.pid` 中记录的 PID |
 | api 容器长时间 `unhealthy` | 首次启动要等 DB + 首次构建慢 | `logs -f api` 看进度；健康检查有 90s 宽限 |
 | PowerShell 无法激活 venv（禁止运行脚本） | 执行策略限制 | `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` |
 | 前端 5173 打不开 | dev 端口是 **15168**（`vite.config.ts` 写死） | 访问 `http://localhost:15168/` |

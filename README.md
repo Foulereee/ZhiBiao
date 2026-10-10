@@ -44,6 +44,7 @@
 | **新主机按示例部署后随机退出登录 / 401** | 登录会话保存在进程内字典，而示例配置给的是 `--workers 2`：多进程间会话不共享。已把 `docker/.env.docker.example` 固定为 `UVICORN_WORKERS=1` 并写明原因（生产实际也是 1） |
 | **Windows 下 `start-postgres.bat` / `stop-postgres.bat` 无法执行** | 这两个批处理原本是 LF 行尾，cmd 会逐行报"不是内部或外部命令"。已在 `.gitattributes` 固定 `*.bat text eol=crlf` |
 | **`alembic upgrade head` 在全新克隆上必然失败** | 仓库内确实没有 `db/migrations`（`alembic.ini` 指向它）。文档改为 `psql -f db/init_pg.sql`，并说明启动时 `init_db()` 会 `create_all` 补齐其余表（实测 22 张） |
+| **`start-postgres.bat` 双击一闪而过、数据库起不来** | 两个 bat 是 UTF-8 却在第 2 行 `chcp 65001`——cmd.exe 会按**切换前的代码页**重算文件偏移，之后每一行都被跳过（实测：脚本一行输出都没有、`pg.log` 都没生成）。已改为 **ASCII-only、不带 chcp**，实测"已在运行 / 启动成功 / 停止"三分支全部正常；`stop-postgres.bat` 的兜底也从 `taskkill /IM postgres.exe /F`（会误杀同机其它 PostgreSQL 实例）改为只结束本目录 `postmaster.pid` 里的 PID |
 | **`db/init_pg.sql` 的角色-权限绑定一条都写不进去** | 4 条 `INSERT ... SELECT` 用 `'前缀' \|\| p.code` 拼 `id`，最长的拼到 40+ 字符，超过 `VARCHAR(36)` → PostgreSQL 报 `value too long`，**整条 INSERT 整体失败**（实测绑定 0 行）。改用 `uuid_generate_v4()::text`（固定 36 字符），幂等性仍由 `ON CONFLICT (role_id, permission_id)` 保证：实测 **72 行**绑定（admin 27 / 项目经理 25 / 撰写 13 / 审核 7），重复导入行数不变 |
 | **资讯中心抓取接口 500** | `services/news/fetchers.py` 直接 import 的 `feedparser` 没写进 `pyproject.toml`，已补齐（并补 `redis` / `minio` 等隐式依赖） |
 | **部分接口缺少鉴权，存在越权风险** | 为相关路由补齐认证依赖与 RBAC 校验，未登录不可访问（实测无 token 全部 401） |
