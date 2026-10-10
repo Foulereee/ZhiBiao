@@ -7,7 +7,7 @@
 
 > 遇到报错先翻 [§6 常见报错对照表](#6-常见报错对照表)，两个最常见的问题（`no configuration file provided` / `does not appear to be a Python project`）都在里面。
 >
-> **Windows 用户可以先试一键脚本**：`.\install.ps1`（自动判断 Docker / 本地，说明见 [§9](#9-一键脚本windows)；停服务用 `.\stop.ps1`）。
+> **可以先试一键脚本**：Windows 用 `.\install.ps1`，Linux 用 `./install.sh`（均自动判断 Docker / 本地，说明见 [§9](#9-一键脚本windows--linux)；停服务分别用 `.\stop.ps1` / `./stop.sh`）。
 
 ---
 
@@ -366,14 +366,16 @@ Error response from daemon: Docker Desktop is unable to start
 
 ---
 
-## 9. 一键脚本（Windows）
+## 9. 一键脚本（Windows / Linux）
 
-仓库根目录自带两个 PowerShell 脚本（**无需管理员权限**）：
+仓库根目录自带两组脚本（**无需管理员权限**；Linux 需 `chmod +x`）：
 
-| 脚本 | 作用 |
-| --- | --- |
-| `install.ps1` | 一键安装/部署：目录校验 → 后端/前端依赖 → 数据库 → 建库建表 → 生成 `.env` → 建管理员 → 起服务 → 健康检查 |
-| `stop.ps1` | 停本地服务（按端口定位进程）；`-Docker` 停容器；`-WithPg` 连便携 PostgreSQL 一起停 |
+| 平台 | 脚本 | 作用 |
+| --- | --- | --- |
+| Windows | `install.ps1` | 一键安装/部署：目录校验 → 依赖 → 数据库 → 建库建表 → `.env` → 建管理员 → 起服务 → 健康检查 |
+| Windows | `stop.ps1` | 停本地服务（按端口）；`-Docker` 停容器；`-WithPg` 连便携 PostgreSQL |
+| Linux | `install.sh` | 同上，支持 Ubuntu/Debian(apt) 与 CentOS/RHEL(dnf/yum)；`--install-deps` 自动装缺失依赖 |
+| Linux | `stop.sh` | 同上；`--docker` 停容器；`--docker --remove` 删容器 |
 
 ### 9.1 最简用法
 
@@ -381,6 +383,16 @@ Error response from daemon: Docker Desktop is unable to start
 cd <仓库根目录>          # 含 pyproject.toml 的那一层
 .\install.ps1            # 自动判断：Docker 引擎可用就走方式一，否则走方式二
 .\stop.ps1               # 停掉本地方式二启动的 API 与前端
+```
+
+Linux：
+
+```bash
+chmod +x install.sh stop.sh
+./install.sh                        # 自动判断
+./install.sh --mode docker          # 强制 Docker（Linux 原生可用，无需 WSL2）
+./install.sh --mode local --install-deps  # 本地模式，缺什么装什么（需 sudo）
+./stop.sh                           # 停服务
 ```
 
 ### 9.2 常用参数
@@ -427,7 +439,7 @@ logs\postgres.log                便携 PostgreSQL（由 pg_ctl 启动时）
 .\stop.ps1 -Docker -Remove  # Docker：删容器与网络（数据卷仍保留；再加 -Volumes 才会删数据）
 ```
 
-> Docker Desktop 未启用 WSL2/Hyper-V 时，`install.ps1 -Mode auto` 会自动改为本地模式，不会卡在半路。
+> Docker Desktop 未启用 WSL2/Hyper-V 时，`install.ps1 -Mode auto` 会自动改为本地模式，不会卡在半路。Linux 上 Docker 原生可用，无需 WSL2；缺依赖时加 `--install-deps`（需 sudo）。
 
 ---
 

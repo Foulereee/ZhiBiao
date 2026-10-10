@@ -132,6 +132,49 @@ function Assert-Root {
     Ok "仓库根目录：$script:Root"
 }
 
+# ─────────────────────────── 依赖缺失时的下载指引 ───────────────────────────
+function Help-Download([string]$what) {
+    Write-Host ''
+    Write-Host '    下载与安装指引：' -ForegroundColor Yellow
+    switch ($what) {
+        'python' {
+            Write-Host '      缺少：Python 3.12+'
+            Write-Host '      下载：https://www.python.org/downloads/windows/'
+            Write-Host '      安装时务必勾选「Add Python to PATH」'
+            Write-Host '      安装后关闭并重新打开终端，再运行本脚本'
+        }
+        'node' {
+            Write-Host '      缺少：Node.js 18+ LTS（自带 npm）'
+            Write-Host '      下载：https://nodejs.org/zh-cn/download/'
+            Write-Host '      选 LTS 版；安装时勾选「Add to PATH」（默认已勾）'
+            Write-Host '      安装后关闭并重新打开终端'
+        }
+        'pg-portable' {
+            Write-Host '      缺少：PostgreSQL（方式二必需）'
+            Write-Host '      方案 A 便携版（免安装、免管理员）：'
+            Write-Host '        1) 下载 Windows x86-64 zip：https://www.enterprisedb.com/download-postgresql-binaries'
+            Write-Host "        2) 解压后把 pgsql 目录放到 $script:Root\.pgsql\extracted\pgsql\"
+            Write-Host "           使 $script:Root\.pgsql\extracted\pgsql\bin\pg_ctl.exe 存在"
+            Write-Host "        3) 初始化数据目录：cd $script:Root\.pgsql\extracted\pgsql\bin"
+            Write-Host '           .\initdb.exe -D ..\..\..\..\data -U postgres --auth=trust'
+        }
+        'pg-installer' {
+            Write-Host '      方案 B 官方安装包：https://www.postgresql.org/download/windows/'
+            Write-Host '      安装时勾选 Command Line Tools；安装后加参数运行本脚本：'
+            Write-Host '        .\install.ps1 -PgRoot "C:\Program Files\PostgreSQL\16"'
+        }
+        'docker' {
+            Write-Host '      缺少：Docker Desktop'
+            Write-Host '      下载：https://www.docker.com/products/docker-desktop/'
+            Write-Host '      安装后：'
+            Write-Host '        1) 管理员执行 wsl --install 然后重启电脑（启用 WSL2/Hyper-V）'
+            Write-Host '        2) 打开 Docker Desktop，等托盘图标变绿'
+            Write-Host '        3) 验证：docker info 能输出 Server 版本即正常'
+        }
+    }
+    Write-Host ''
+}
+
 # ─────────────────────────── 环境文件 ───────────────────────────
 function Write-RootEnv {
     $dst = Join-Path $script:Root '.env'
@@ -208,22 +251,16 @@ function Resolve-PgBin {
 function Ensure-Postgres {
     $bin = Resolve-PgBin
     if ($null -eq $bin) {
-        Die @"
-本机没有找到 PostgreSQL（方式二必需）。
-    三种办法，任选其一后重新运行本脚本：
-
-    1) 便携版（免安装、免管理员）：把解压好的 pgsql 目录放到
-         $script:Root\.pgsql\extracted\pgsql\
-       使得 $script:Root\.pgsql\extracted\pgsql\bin\pg_ctl.exe 存在，并准备好数据目录
-         $script:Root\.pgsql\data   （用 initdb 初始化）
-       本机现成的一份在 D:\esa\BidMaster-Pro\.pgsql（PG 16），可直接复制过来。
-
-    2) 官方安装包：https://www.postgresql.org/download/windows/
-       安装后确保 psql/pg_ctl 在 PATH 中，或加参数：-PgRoot "C:\Program Files\PostgreSQL\16"
-
-    3) 用 Docker 只起数据库（需要 Docker 引擎可用）：
-         docker compose -f docker/docker-compose.yml --profile infra up -d postgres
-"@
+        Write-Host ''
+        Write-Host '    [X]  本机没有找到 PostgreSQL（方式二必需）。' -ForegroundColor Red
+        Help-Download 'pg-portable'
+        Help-Download 'pg-installer'
+        Write-Host '      方案 C 用 Docker 只起数据库（需 Docker 引擎可用）：' -ForegroundColor Yellow
+        Write-Host '        docker compose -f docker/docker-compose.yml --profile infra up -d postgres'
+        Write-Host ''
+        Write-Host "    日志：$script:LogFile" -ForegroundColor DarkGray
+        Write-Log 'FATAL PostgreSQL 未找到'
+        exit 1
     }
     if ($bin) { Ok "PostgreSQL 客户端：$bin" } else { Ok 'PostgreSQL 客户端：PATH 中已有 pg_ctl' }
 
@@ -318,7 +355,7 @@ function Ensure-Database([string]$bin) {
 function Install-Local {
     $py = Get-PythonLauncher
     Step '1/8' '检查 Python'
-    if (-not $py) { Die '未找到 python。请安装 Python 3.12+ 并勾选"Add to PATH"，然后重新打开终端。' }
+    if (-not $py) { Help-Download 'python'; Die '未找到 python。安装后重新打开终端再运行本脚本。' }
     $ver = (& $py -c "import sys;print('%d.%d'%sys.version_info[:2])" 2>&1 | Out-String).Trim()
     Write-Log "python $py 版本 $ver"
     $v = [version]$ver
@@ -344,7 +381,8 @@ function Install-Local {
     if ($SkipFrontend) {
         Warn '已按 -SkipFrontend 跳过'
     } elseif (-not (Have 'npm')) {
-        Warn '未找到 npm，跳过前端依赖。装好 Node.js 18+ 后执行：cd packages\desktop; npm install'
+        Help-Download 'node'
+        Warn '未找到 npm，跳过前端依赖。装好 Node.js 后重开终端，再执行：cd packages\desktop; npm install'
     } elseif (Test-Path (Join-Path $script:Root 'packages\desktop\node_modules')) {
         Ok 'node_modules 已存在，跳过（需要更新时自行 npm install）'
     } else {
@@ -415,7 +453,10 @@ function Install-Local {
 # ─────────────────────────── 方式一：Docker ───────────────────────────
 function Install-Docker {
     Step '1/6' '检查 Docker 引擎'
-    if (-not (Have 'docker')) { return $false }
+    if (-not (Have 'docker')) {
+        Help-Download 'docker'
+        return $false
+    }
     & docker info *> $null
     if ($LASTEXITCODE -ne 0) {
         Warn 'Docker 引擎不可用（daemon 没起来）。常见原因与处理：'

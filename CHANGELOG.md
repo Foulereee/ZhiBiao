@@ -235,3 +235,23 @@
   属内部命名、无敏感性，保留（改名会与既有部署不一致）。
 - 复核结论：仓库内**没有**硬编码密钥；唯一出现的口令是文档中说明的 `db/init_pg.sql` 默认管理员密码
   `admin123`（部署后必须立即修改）；`服务器运维说明.md`、`迁移部署/`、`验证环境/` 均未上传。
+
+## [1.0.5] - 2026-10-11
+
+### Added（新增）
+
+- **`install.sh` / `stop.sh`**：Linux 一键部署脚本（bash），支持 Ubuntu/Debian(apt) 与 CentOS/RHEL/Rocky/AlmaLinux(dnf/yum)。
+  默认自动判断 Docker / 本地；`--install-deps` 自动装缺失依赖（Docker / Python3 / Node.js / PostgreSQL）。
+  步骤对齐 Windows 的 `install.ps1`：校验目录 → 依赖 → venv → npm → PostgreSQL → 建库建表 → `.env` → 建管理员 → 起服务 → 健康检查。
+  已设可执行位（`100755`），行尾 LF。
+
+### Changed（变更）
+
+- **`install.ps1` 增强**：Python / Node.js / PostgreSQL / Docker 四种依赖缺失时，打印**下载地址与安装后放置位置**
+  （新增 `Help-Download` 函数）。例如：Python 给 `python.org/downloads/windows` + 勾选 Add to PATH；
+  PostgreSQL 给便携版（`enterprisedb.com/download-postgresql-binaries`，解压到 `.pgsql\extracted\pgsql\`）与
+  官方安装包（`postgresql.org/download/windows`，加 `-PgRoot`）两种方案；Docker 给 `docker.com` + WSL2 步骤。
+- **`README.md` 大幅精简**：688 行 → **229 行**（-67%，46.4 KB → 14.8 KB）。把重点修复表（16 行）、新增能力表（16 行）、
+  修复实测表、实机验证记录（超长单元格）、已知边界、4 个技术栈表、核心概念代码块等冗长段落压缩为精简列表与一句话概述；
+  细节统一指向 CHANGELOG / DEPLOY。保留全部事实信息（命令、URL、端口、版本、13 张截图、2 张架构图）。
+- **`DEPLOY.md` §9** 扩展为「一键脚本（Windows / Linux）」，新增 `install.sh` / `stop.sh` 的用法与参数说明。
