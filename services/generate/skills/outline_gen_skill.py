@@ -87,7 +87,27 @@ def _fix_outline_node(node: dict, parent_id: str = "", seq: int = 0, level: int 
     for i, child in enumerate(children):
         if isinstance(child, dict):
             fixed_children.append(_fix_outline_node(child, node_id, i + 1, node_level + 1))
-    return {"id": node_id, "title": title, "level": node_level, "children": fixed_children}
+    # 【必须保留 description】它是全书唯一一处"本节到底写什么"的说明：
+    #   ① 正文链路用它渲染【当前章节大纲】与【同级章节（请避免内容重复）】
+    #      （generate.py 的 _node_line / _describe_node_tree）；
+    #   ② 编排阶段（content_plan_skill.format_outline_for_plan）用它判断各节
+    #      分工与边界 —— 没有它，编排看到的完整目录只有一串标题，写出来的
+    #      writing_focus 只能靠标题猜。
+    # 以前这里只返回 id/title/level/children，description 被就地丢掉，加上
+    # _renumber_outline 也不保留，导致全链路恒空：实测 213 章的"章节上下文"
+    # 中位只有 172 字符。对标易标：目录节点必带 description
+    # （outlineGenerationTaskV2.cjs:653「description 是目录说明」，schema 必填）。
+    fixed = {
+        "id": node_id, "title": title, "level": node_level,
+        "children": fixed_children,
+    }
+    _desc = str(node.get("description") or node.get("describe") or "").strip()
+    if _desc:
+        fixed["description"] = _desc
+    # points 是"被合并/被裁掉的更深层标题"，正文提示词当写作要点用，不能丢
+    if isinstance(node.get("points"), list) and node["points"]:
+        fixed["points"] = node["points"]
+    return fixed
 
 
 def _renumber_outline(items: list, parent: str = "") -> list:
@@ -97,15 +117,165 @@ def _renumber_outline(items: list, parent: str = "") -> list:
             continue
         new_id = f"{parent}.{idx + 1}" if parent else str(idx + 1)
         entry = {"id": new_id, "title": item.get("title", ""), "level": item.get("level", 1)}
-        if item.get("describe"):
-            entry["describe"] = item["describe"]
+        # description（与历史上的 describe）必须随重编号一起带过去，否则前面
+        # _fix_outline_node 刚保住的目录说明会在这里再次丢失。
+        _desc = str(item.get("description") or item.get("describe") or "").strip()
+        if _desc:
+            entry["description"] = _desc
         if item.get("content"):
             entry["content"] = item["content"]
+        # points 是"被合并掉的更深层标题"，供正文提示词当写作要点用
+        if item.get("points"):
+            entry["points"] = item["points"]
         children = item.get("children", [])
         if children and isinstance(children, list):
             entry["children"] = _renumber_outline(children, new_id)
         results.append(entry)
     return results
+
+
+# 投标文件目录的最大层级。
+# 实测导出的标书出现了 1.1.1.1 / 1.1.1.1.1（Heading 5 共 323 段），
+# 原因是 Step2"为每个一级章节生成二三级子目录"时模型会继续往下套娃，
+# 而生成后的归一化只做了编号重排、没有深度上限，同名覆盖也不管。
+# 国内投标文件的通行深度是"章/节/条"三级，更深的内容应该写成正文段落。
+MAX_OUTLINE_DEPTH = 3
+
+# 子标题相对父标题只多了这些词时，视为同一个章节（重复展开）
+_DUP_SUFFIXES = ("正文", "说明", "概述", "详细说明", "具体内容", "及附件", "及相关材料",
+                 "如适用", "（如适用）", "(如适用)")
+
+
+def _norm_title(title: str) -> str:
+    t = str(title or "")
+    t = re.sub(r"[\s\u3000]", "", t)
+    return re.sub(r"[()（）【】\[\]:：、,，.。\-—_/]", "", t)
+
+
+def _is_dup_child(parent_title: str, child_title: str) -> bool:
+    """父子标题语义重复判定（父:投标函 / 子:投标函正文；父:信用证明 / 子:信用证明）。"""
+    p, c = _norm_title(parent_title), _norm_title(child_title)
+    if not p or not c:
+        return False
+    if p == c:
+        return True
+    return any(c == _norm_title(p + suf) for suf in _DUP_SUFFIXES)
+
+
+def _dedup_outline(nodes: list) -> list:
+    """去掉"父子同名"的冗余节点，把子节点的子节点提升上来。
+
+    实例（实测 端头…docx）：
+        1    投标函及商务承诺
+        1.1  投标函
+        1.1.1  投标函正文
+        1.1.1.1  投标函
+        1.1.1.1.1  投标函正文      ← 同一份材料套娃了四层
+    归一化后只保留 1 / 1.1，后面的层级被折叠。
+    """
+    out: list[dict] = []
+    for node in nodes or []:
+        if not isinstance(node, dict):
+            continue
+        children = _dedup_outline(node.get("children") or [])
+        promoted: list[dict] = []
+        for child in children:
+            if _is_dup_child(node.get("title", ""), child.get("title", "")):
+                promoted.extend(_dedup_outline(child.get("children") or []))
+            else:
+                promoted.append(child)
+        merged = dict(node)
+        merged["children"] = promoted
+        out.append(merged)
+
+    # 同级同名去重：实测一级目录里出现 3 个"法定代表人身份证明"、2 个"开标一览表"，
+    # 会生成 5~6 份同样的材料章节。保留第一个，把后来的合并成写作要点。
+    deduped: list[dict] = []
+    seen: dict[str, dict] = {}
+    for node in out:
+        key = _norm_title(node.get("title", ""))
+        if not key:
+            deduped.append(node)
+            continue
+        if key in seen:
+            keeper = seen[key]
+            extra = list(node.get("points") or [])
+            for ch in node.get("children") or []:
+                t = str(ch.get("title") or "").strip()
+                if t and t not in extra:
+                    extra.append(t)
+            if extra:
+                points = list(keeper.get("points") or [])
+                for t in extra:
+                    if t not in points:
+                        points.append(t)
+                keeper["points"] = points
+            continue
+        seen[key] = node
+        deduped.append(node)
+    return deduped
+
+
+def _dedup_until_stable(nodes: list, max_rounds: int = 6) -> list:
+    """反复去重直到不再变化。
+
+    为什么要迭代：一次去重会把"重复子节点"提升上来，提升后的节点可能和它的
+    新父亲又构成重复。实例（实测 端头…docx 的套娃链）：
+        1 投标函及商务承诺 → 1.1 投标函 → 1.1.1 投标函正文
+        → 1.1.1.1 投标函 → 1.1.1.1.1 投标函正文
+    单轮去重只吃掉中间两层，剩下的"投标函"会顶替"投标函正文"的位置，与 1.1
+    再次同名。实测单轮后仍是 `1 投标函及商务承诺 → 1.1 投标函 → 1.1.1 投标函`。
+    """
+    prev = None
+    cur = nodes
+    for _ in range(max_rounds):
+        cur = _dedup_outline(cur)
+        sig = json.dumps(cur, ensure_ascii=False, sort_keys=True)
+        if sig == prev:
+            break
+        prev = sig
+    return cur
+
+
+def _prune_outline_depth(nodes: list, depth: int = 1) -> list:
+    """把超过 MAX_OUTLINE_DEPTH 的层级裁掉，并把被裁掉的标题收进父节点的 points。
+
+    不直接丢弃内容：更深的标题会作为"写作要点"传给正文生成，让那一章把
+    这些点写进正文段落里，而不是变成四五级标题。
+    """
+    out: list[dict] = []
+    for node in nodes or []:
+        if not isinstance(node, dict):
+            continue
+        children = node.get("children") or []
+        if depth >= MAX_OUTLINE_DEPTH:
+            collected: list[str] = []
+
+            def _collect(ns: list) -> None:
+                for c in ns or []:
+                    if not isinstance(c, dict):
+                        continue
+                    t = str(c.get("title") or "").strip()
+                    if t and t not in collected:
+                        collected.append(t)
+                    _collect(c.get("children") or [])
+
+            _collect(children)
+            pruned = dict(node)
+            pruned["children"] = []
+            if collected:
+                existing = node.get("points")
+                points = list(existing) if isinstance(existing, list) else []
+                for t in collected:
+                    if t not in points:
+                        points.append(t)
+                pruned["points"] = points
+            out.append(pruned)
+            continue
+        pruned = dict(node)
+        pruned["children"] = _prune_outline_depth(children, depth + 1)
+        out.append(pruned)
+    return out
 
 
 def _fix_outline(data: dict) -> dict:
@@ -132,6 +302,10 @@ def _fix_outline(data: dict) -> dict:
     for ch in fixed_chapters:
         if not ch.get("children"):
             ch["children"] = _generate_default_sub_chapters(ch.get("title", ""), ch.get("id", ""))
+    # 顺序很重要：先去重（同名父子会把层级撑深，且需迭代到不动点），
+    # 再裁深度，最后统一重编号。
+    fixed_chapters = _dedup_until_stable(fixed_chapters)
+    fixed_chapters = _prune_outline_depth(fixed_chapters)
     fixed_chapters = _renumber_outline(fixed_chapters)
     result = {"chapters": fixed_chapters}
     score_mapping = data.get("score_mapping", {})
@@ -155,7 +329,42 @@ def _validate_outline(outline: dict) -> str | None:
     chapters_with_children = sum(1 for c in chapters if c.get("children"))
     if chapters_with_children < len(chapters) * 0.5:
         return f"大部分一级目录缺少二级子目录({chapters_with_children}/{len(chapters)})"
+
+    # 深度与重名只告警、不作为校验失败：_fix_outline 里有确定性的
+    # _dedup_outline / _prune_outline_depth 会处理掉，这里再报错只会
+    # 触发昂贵的"降级到一次性生成"，反而更差。
+    def _depth(nodes: list, d: int = 1) -> int:
+        best = d
+        for n in nodes or []:
+            if isinstance(n, dict) and n.get("children"):
+                best = max(best, _depth(n["children"], d + 1))
+        return best
+
+    real_depth = _depth(chapters)
+    if real_depth > MAX_OUTLINE_DEPTH:
+        logger.warning(
+            "[OutlineGenSkill] 大纲层级过深(%s 级，上限 %s)，将裁到 %s 级并把更深标题转为写作要点",
+            real_depth, MAX_OUTLINE_DEPTH, MAX_OUTLINE_DEPTH,
+        )
+    dup_titles = [t for t, n in _count_titles(chapters).items() if n > 1]
+    if dup_titles:
+        logger.warning("[OutlineGenSkill] 存在同级重名目录 %s 组，将自动合并", len(dup_titles))
     return None
+
+
+def _count_titles(nodes: list) -> dict[str, int]:
+    """统计各层级标题出现次数（只用于告警）。"""
+    counts: dict[str, int] = {}
+    stack = list(nodes or [])
+    while stack:
+        n = stack.pop()
+        if not isinstance(n, dict):
+            continue
+        key = _norm_title(n.get("title", ""))
+        if key:
+            counts[key] = counts.get(key, 0) + 1
+        stack.extend(n.get("children") or [])
+    return counts
 
 
 def _generate_default_sub_chapters(title: str, parent_id: str) -> list[dict]:
@@ -297,7 +506,8 @@ def _build_step1_messages(
             "如果评分标准中没有明确章节名称，则结合内容总结一级目录名称。\n"
             "3. 一级目录必须覆盖所有评分项。\n"
             "4. 一般包含8-15个一级章节。\n"
-            "5. 必须包含：投标函、资格审查、技术方案、商务报价等基本章节。\n"
+            "5. 章节组成必须严格服从下方【生成范围要求】；若未给出生成范围要求，"
+            "才按完整投标文件处理，包含投标函、资格审查、技术方案、商务报价等基本章节。\n"
             "6. 【严禁】使用'章节N'、'第N章'等占位符作为标题，"
             "每个标题必须是有实际含义的专业名称。\n"
             "7. 【严禁】生成空章节（没有description的章节），"
@@ -322,7 +532,8 @@ def _build_step1_messages(
             "要求：\n"
             "1. 一级目录名称要专业、准确，符合投标文件规范。\n"
             "2. 一般包含8-15个一级章节。\n"
-            "3. 必须包含：投标函、资格审查、技术方案、商务报价等基本章节。\n"
+            "3. 章节组成必须严格服从下方【生成范围要求】；若未给出生成范围要求，"
+            "才按完整投标文件处理，包含投标函、资格审查、技术方案、商务报价等基本章节。\n"
             "4. 【严禁】使用'章节N'、'第N章'等占位符作为标题，"
             "每个标题必须是有实际含义的专业名称。\n"
             "5. 【严禁】生成空章节，每个章节的description必须具体说明本章要写什么。\n"
@@ -420,6 +631,14 @@ class OutlineGenSkill(Skill):
         # 格式化结构模板提示
         structure_hint = _format_structure_sections(structure_sections) if structure_sections else ""
 
+        # 生成范围硬约束（完整投标文件 / 技术标独立成册 / 商务标独立成册）。
+        # 放在最前面，因为它与"必须包含投标函、资格审查…"这类默认要求冲突时
+        # 必须以它为准；没有它，用户选了技术标也会生成出完整投标文件。
+        _scope_req = str(ctx.parameters.get("scope_requirement") or "").strip()
+        if _scope_req:
+            structure_hint = (f"{_scope_req}\n\n{structure_hint}").strip()
+            logger.info("[OutlineGenSkill] 已注入生成范围约束 %d 字", len(_scope_req))
+
         logger.info(
             f"[OutlineGenSkill] mode={mode}, 文档长度={len(document_text)}字符, "
             f"scoring_matrix_rows={len(scoring_matrix.get('rows', []))}, "
@@ -508,8 +727,24 @@ class OutlineGenSkill(Skill):
                 if isinstance(sub, dict):
                     sub_title = str(sub.get("title", "")).strip()
                     if sub_title:
-                        fixed_sub.append({"id": f"{child_id}.{k+1}", "title": sub_title, "level": 3, "children": []})
-            fixed_children.append({"id": child_id, "title": child_title, "level": 2, "children": fixed_sub})
+                        sub_node = {
+                            "id": f"{child_id}.{k+1}", "title": sub_title,
+                            "level": 3, "children": [],
+                        }
+                        # 三级小节的 description 同样要留着 —— 它是正文里
+                        # 【本章任务】"结构要求"之外唯一的范围依据
+                        _sd = str(sub.get("description") or sub.get("describe") or "").strip()
+                        if _sd:
+                            sub_node["description"] = _sd
+                        fixed_sub.append(sub_node)
+            child_node = {
+                "id": child_id, "title": child_title, "level": 2,
+                "children": fixed_sub,
+            }
+            _cd = str(child.get("description") or child.get("describe") or "").strip()
+            if _cd:
+                child_node["description"] = _cd
+            fixed_children.append(child_node)
 
         full_chapter = {
             "id": str(i + 1),

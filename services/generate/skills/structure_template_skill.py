@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 from core.skill_engine.base import Skill, SkillContext, SkillResult
@@ -75,17 +76,29 @@ BID_STRUCTURES = {
     },
     "commercial": {
         "name": "商务标",
+        # 旧预设只有 5 个纯报价章节，而且"分项报价明细表"用的是施工计价口径
+        # （人工费/材料费/机械费/管理费/利润/税金）—— 本平台做的是设备采购类
+        # 项目，这套口径会直接把模型带偏，且缺了商务标真正必须有的一半内容。
+        # 现按 OpenBidKit「商务标独立成册」的范围补齐：投标函与承诺、资格证明、
+        # 财务与信用、业绩、商务条款响应与偏离、报价、付款与优惠。
         "sections": [
-            {"id": "cb_1", "title": "投标报价汇总表", "level": 1, "page_target": 2,
-             "content_hint": "总报价、分项报价汇总"},
-            {"id": "cb_2", "title": "分项报价明细表", "level": 1, "page_target": 5,
-             "content_hint": "人工费、材料费、机械费、管理费、利润、税金"},
-            {"id": "cb_3", "title": "报价编制说明", "level": 1, "page_target": 2,
-             "content_hint": "编制依据、取费标准、价格来源"},
-            {"id": "cb_4", "title": "成本分析", "level": 1, "page_target": 3,
-             "content_hint": "直接成本、间接成本、风险成本分析"},
-            {"id": "cb_5", "title": "价格优惠与让利", "level": 1, "page_target": 1,
-             "content_hint": "优惠条件、让利幅度"},
+            {"id": "cb_1", "title": "投标函及投标承诺", "level": 1, "page_target": 2,
+             "content_hint": "投标函、法定代表人授权、投标承诺与声明"},
+            {"id": "cb_2", "title": "资格证明文件", "level": 1, "page_target": 3,
+             "content_hint": "营业执照、资质证书、法定代表人身份证明、授权委托书"},
+            {"id": "cb_3", "title": "财务与信用材料", "level": 1, "page_target": 3,
+             "content_hint": "财务报表、审计报告、纳税与社保证明、信用证明"},
+            {"id": "cb_4", "title": "业绩案例", "level": 1, "page_target": 3,
+             "content_hint": "近三年同类项目业绩、合同及验收证明"},
+            {"id": "cb_5", "title": "商务条款响应及偏离表", "level": 1, "page_target": 3,
+             "content_hint": "逐条响应招标文件商务条款，列明响应对照与正负偏离"},
+            {"id": "cb_6", "title": "投标报价汇总表", "level": 1, "page_target": 2,
+             "content_hint": "投标总报价、分项报价汇总，金额一律使用待填占位符"},
+            {"id": "cb_7", "title": "分项报价明细表", "level": 1, "page_target": 5,
+             "content_hint": "按招标文件的工程量清单或设备清单逐项列示：名称、规格型号、"
+                             "单位、数量、单价、合价；单价与合价写成 {{待填:单价}} 形式"},
+            {"id": "cb_8", "title": "付款条件与优惠承诺", "level": 1, "page_target": 2,
+             "content_hint": "付款方式响应、优惠条件、让利幅度、质保金约定"},
         ],
     },
     "service": {
@@ -106,6 +119,144 @@ BID_STRUCTURES = {
         ],
     },
 }
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 分值解析：招标解读给出的评分项往往只有名称 + 一段描述，
+# 分值是写在描述里的（"2分/项，最高10分"），没有独立的 score 字段。
+# 旧代码直接 item.get("score", 0) 取不到就是 0 —— 于是：
+#   ① 送给大纲模型的评分矩阵里每一项都是 0 分；
+#   ② 评分覆盖率算出来恒为 0%（分子分母都是 0）。
+# 这里按"最高/满分/每项得分"从大到小取第一个能对上的数，取不到才回退 0。
+# ══════════════════════════════════════════════════════════════════════════
+_SCORE_PATTERNS = (
+    r"最高\s*(\d+(?:\.\d+)?)\s*分",
+    r"满分\s*(\d+(?:\.\d+)?)\s*分",
+    r"共\s*(\d+(?:\.\d+)?)\s*分",
+    r"(\d+(?:\.\d+)?)\s*分\s*/\s*项",
+    r"每(?:一)?(?:项|个|份)\s*(?:得|计)?\s*(\d+(?:\.\d+)?)\s*分",
+)
+# 兜底用的"任意 N 分"，但要排除扣分语境
+_SCORE_ANY = r"(\d+(?:\.\d+)?)\s*分"
+# 前面 6 个字里出现这些词 = 这条是扣分/减免规则，不是分值
+_DEDUCT_HINT = ("扣", "减", "下浮", "降低", "扣减")
+_SCORE_LABEL_KEY = "score_source"
+
+
+def _to_float(value) -> float:
+    if isinstance(value, bool):
+        return 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        m = re.search(r"(\d+(?:\.\d+)?)", value)
+        if m:
+            try:
+                return float(m.group(1))
+            except ValueError:
+                return 0.0
+    return 0.0
+
+
+def parse_score_value(item: dict) -> tuple[float, str]:
+    """取一个评分项的分值，返回 (分值, 来源)。
+
+    招标解读给的评分项通常只有 name + 一段评分办法描述，分值是写在描述里的。
+    直接从描述里抓"第一个 N 分"会抓错 —— 实测「投标总报价」的评分办法里
+    开头就是"每高一个百分点扣1分"，于是被解析成 1 分（该项真实是价格分 35 分）。
+
+    所以取值顺序是：
+      ① 结构化字段 score/max_score/full_score/weight/value；
+      ② "最高N分 / 满分N分 / 共N分 / N分每项" 这类明确写法；
+      ③ 描述里所有" N 分"，**排除"扣N分/减N分"等扣分语境后取最大值**。
+    都拿不到返回 0，并且把来源标出来，便于排查"这项分值怎么是 0"。
+    """
+    if not isinstance(item, dict):
+        return 0.0, "none"
+    for key in ("score", "max_score", "full_score", "weight", "value"):
+        if key in item and item.get(key) not in (None, "", "-", "无"):
+            got = _to_float(item.get(key))
+            if got > 0:
+                return got, f"field:{key}"
+    desc = " ".join(
+        str(item.get(k) or "") for k in ("description", "criteria", "standard", "detail", "rule")
+    )
+    for pat in _SCORE_PATTERNS:
+        m = re.search(pat, desc)
+        if m:
+            got = _to_float(m.group(1))
+            if got > 0:
+                return got, "pattern"
+    best = 0.0
+    for m in re.finditer(_SCORE_ANY, desc):
+        before = desc[max(0, m.start() - 6):m.start()]
+        if any(h in before for h in _DEDUCT_HINT):
+            continue
+        got = _to_float(m.group(1))
+        if got > best:
+            best = got
+    if best > 0:
+        return best, "pattern:max"
+    return 0.0, "none"
+
+
+def extract_score_items(scoring_dim) -> list[dict]:
+    """把 dimensions.scoring（或任何形状的评分数据）拍平成 [{name, score, ...}]。
+
+    三类形状都要认，缺一类就会"找不到评分项"：
+      ① {"scoring_items": [{name, description}, ...]}
+      ② {"rows": [...]} / {"items": [...]} / {"score_matrix": [...]}
+      ③ 只有权重没有明细：{"price_weight": "35分", "business_weight": "25分",
+         "technical_weight": "40分"} —— 旧实现只认 list/dict，这三项是字符串，
+         被整条丢掉，最后报"评分矩阵中无评分项"。
+    """
+    if isinstance(scoring_dim, list):
+        raw = [x for x in scoring_dim if isinstance(x, dict)]
+    elif isinstance(scoring_dim, dict):
+        raw = []
+        for key in ("scoring_items", "rows", "items", "score_matrix", "scoring_matrix",
+                    "score_items", "matrix", "scores", "list", "detail"):
+            val = scoring_dim.get(key)
+            if isinstance(val, list) and val:
+                raw = [x for x in val if isinstance(x, dict)]
+                break
+        if not raw:
+            # 整个 dict 就是一行评分项
+            if any(k in scoring_dim for k in ("name", "item", "criteria", "score")):
+                raw = [scoring_dim]
+    else:
+        return []
+
+    items: list[dict] = []
+    for row in raw:
+        name = str(row.get("name") or row.get("item") or row.get("category") or "").strip()
+        if not name:
+            continue
+        score, src = parse_score_value(row)
+        items.append({
+            "name": name,
+            "score": score,
+            _SCORE_LABEL_KEY: src,
+            "category": str(row.get("category") or "").strip(),
+            "criteria": str(row.get("criteria") or row.get("description") or "").strip(),
+        })
+
+    if items:
+        return items
+
+    # ③ 只有权重：折算成三个"维度级"评分项，保证覆盖率检查至少有东西可比
+    if isinstance(scoring_dim, dict):
+        kw = (("business_weight", "商务"), ("technical_weight", "技术"), ("price_weight", "价格"))
+        for key, label in kw:
+            val = scoring_dim.get(key)
+            if val in (None, "", "-", "无"):
+                continue
+            got = _to_float(val)
+            if got > 0:
+                items.append({"name": f"{label}部分（权重）", "score": got,
+                              _SCORE_LABEL_KEY: f"field:{key}",
+                              "category": label, "criteria": ""})
+    return items
 
 
 class StructureTemplateSkill(Skill):
@@ -199,6 +350,11 @@ class ScoreCoverageSkill(Skill):
     async def execute(self, ctx: SkillContext) -> SkillResult:
         scoring_matrix = ctx.parameters.get("scoring_matrix", {})
         outline_sections = ctx.parameters.get("outline_sections", [])
+        # 大纲阶段已经算好的"评分项 → 章节id"权威映射。它是按一级章节名做过
+        # 相似度匹配的，比这里重新猜一遍可靠，必须优先用。
+        authoritative = ctx.parameters.get("score_mapping") or {}
+        if not isinstance(authoritative, dict):
+            authoritative = {}
 
         if not scoring_matrix:
             return SkillResult(success=False, error="无评分矩阵数据")
@@ -214,11 +370,26 @@ class ScoreCoverageSkill(Skill):
         coverage_map = {}
         covered_items = []
         uncovered_items = []
+        total_score = 0.0
 
         for item in score_items:
-            item_name = item.get("name") or item.get("item") or item.get("category") or ""
-            item_score = item.get("score", item.get("weight", 0))
-            matched_section = self._find_matching_section(item_name, outline_sections)
+            item_name = str(item.get("name") or item.get("item") or "").strip()
+            if not item_name:
+                continue
+            # 分值统一走一个来源：parse_score_value 已经处理过"从描述里解析"，
+            # 这里再加一层兜底，避免出现"分子有值、分母为0 → 覆盖率 4000%"。
+            item_score = _to_float(item.get("score"))
+            total_score += item_score
+
+            matched_section = ""
+            # ① 权威映射（大纲算的）优先
+            for key, node in authoritative.items():
+                if str(key).strip() == item_name and node:
+                    matched_section = str(node)
+                    break
+            # ② 没映射过再按标题相似度找
+            if not matched_section:
+                matched_section = self._find_matching_section(item_name, outline_sections)
 
             if matched_section:
                 covered_items.append({
@@ -234,9 +405,11 @@ class ScoreCoverageSkill(Skill):
                     "suggestion": "建议添加章节覆盖此项",
                 })
 
-        total_score = sum(item.get("score", 0) for item in score_items)
-        covered_score = sum(item["score"] for item in covered_items)
-        coverage_rate = round(covered_score / max(total_score, 1) * 100, 1)
+        covered_score = sum(_to_float(item["score"]) for item in covered_items)
+        # 总分兜底：只有权重、没有明细分值的情况下用权重合计，避免分母为 0
+        if total_score <= 0:
+            total_score = self._weight_total(scoring_matrix) or covered_score
+        coverage_rate = round(covered_score / total_score * 100, 1) if total_score > 0 else 0.0
 
         return SkillResult(
             success=True,
@@ -253,23 +426,38 @@ class ScoreCoverageSkill(Skill):
             },
         )
 
-    def _extract_score_items(self, matrix: dict) -> list[dict]:
-        items = []
+    @staticmethod
+    def _weight_total(matrix) -> float:
+        """从"只有权重"的评分数据里取总分（商务+技术+价格）。"""
+        if not isinstance(matrix, dict):
+            return 0.0
+        total = 0.0
+        for key in ("business_weight", "technical_weight", "price_weight"):
+            total += _to_float(matrix.get(key))
+        return total
+
+    def _extract_score_items(self, matrix) -> list[dict]:
+        """拍平评分数据；分值从描述里解析（见模块级 parse_score_value）。
+
+        旧实现只认 list/dict 类型的值，遇到"只有权重的三个字符串字段"直接丢掉，
+        最终返回空列表并报"评分矩阵中无评分项"。
+        """
+        items = extract_score_items(matrix)
+        if items:
+            return items
+        # 兼容"评分项就是字符串列表"的老形状
+        raw: list = []
         if isinstance(matrix, list):
-            return matrix
-
-        for key, value in matrix.items():
-            if isinstance(value, list):
-                for item in value:
-                    if isinstance(item, dict):
-                        items.append(item)
-                    elif isinstance(item, str):
-                        items.append({"name": item, "score": 0})
-            elif isinstance(value, dict):
-                sub_items = self._extract_score_items(value)
-                items.extend(sub_items)
-
-        return items
+            raw = matrix
+        elif isinstance(matrix, dict):
+            for value in matrix.values():
+                if isinstance(value, list):
+                    raw.extend(value)
+        out = []
+        for x in raw:
+            if isinstance(x, str) and x.strip():
+                out.append({"name": x.strip(), "score": 0.0})
+        return out
 
     def _flatten_titles(self, sections) -> list[str]:
         """把大纲（list / dict{'chapters':[...]} / 任意层级 children）拍平成标题列表。"""

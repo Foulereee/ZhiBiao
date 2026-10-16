@@ -396,11 +396,16 @@ class LLMGateway:
         temperature: float = 0.7,
         max_tokens: int | None = None,
         no_thinking: bool = False,
+        meta: dict | None = None,
     ) -> AsyncGenerator[str, None]:
         """流式聊天，带错误处理和重试。
 
         max_tokens 不传时保持历史行为(8192)。生成正文时会按"本章目标字数"
         传进来,否则 8192 的硬顶会让单章随便写到 1.1 万字。
+
+        meta:传一个空 dict 进来，本方法会把 finish_reason 写进去
+        （"stop" = 正常写完，"length" = 被 max_tokens 截断）。
+        调用方据此决定要不要续写，避免把截断的半句话当成功正文入库。
 
         no_thinking=True 带 thinking={"type":"disabled"}:实测商汤
         sensenova-6.8-flash-lite 这类推理模型写长章节时会把上万 token 全用在
@@ -463,7 +468,7 @@ class LLMGateway:
                 logger.info(f"[LLM] 流式响应开始 model={current_model}, attempt={attempt+1}")
 
                 # 消费流式响应
-                async for chunk in self._stream_response(response):
+                async for chunk in self._stream_response(response, meta):
                     collected_chunks.append(chunk)
                     yield chunk
 
@@ -561,20 +566,34 @@ class LLMGateway:
             return True
         return all(v is None or v == "" or v == [] or v == {} for v in real.values())
 
-    async def _stream_response(self, response) -> AsyncGenerator[str, None]:
+    async def _stream_response(self, response, meta: dict | None = None) -> AsyncGenerator[str, None]:
         """流式响应处理，带错误恢复。
 
         改进：
         1. 捕获流式迭代中的异常，避免直接终止生成器
         2. 对空 choices 做防御处理
         3. 遇到错误时 yield 特殊标记，让上层感知
+        4. meta 非空时把 finish_reason 透出来
+
+        第 4 点是本次新增的关键：旧实现把 finish_reason 直接丢掉，于是调用方
+        无法区分"模型写完了"和"被 max_tokens 截断了"。长章节一旦被截断，
+        正文长度仍然 >50 字，上层就当成成功入库 —— 标书里会出现半句话结尾的
+        章节。这是隐蔽的实质性缺陷，必须在调用方可见。
         """
         try:
             async for chunk in response:
                 try:
                     if not chunk.choices:
+                        # 有些 provider 把 usage 放在最后一个没有 choices 的块里
+                        if meta is not None and getattr(chunk, "usage", None):
+                            meta["usage"] = chunk.usage
                         continue
-                    delta = chunk.choices[0].delta
+                    choice = chunk.choices[0]
+                    if meta is not None:
+                        fr = getattr(choice, "finish_reason", None)
+                        if fr:
+                            meta["finish_reason"] = str(fr)
+                    delta = choice.delta
                     if delta and delta.content:
                         yield delta.content
                 except (IndexError, AttributeError) as e:

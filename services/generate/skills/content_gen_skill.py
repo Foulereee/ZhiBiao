@@ -132,9 +132,11 @@ class ContentGenSkill(Skill):
         )
 
     @staticmethod
-    def _post_process(content: str, chapter_title: str) -> str:
+    def _post_process(
+        content: str, chapter_title: str, protect_names: tuple[str, ...] = ()
+    ) -> str:
         from services.generate.skills.content_cleaner import clean_generated_content
-        return clean_generated_content(content, chapter_title)
+        return clean_generated_content(content, chapter_title, protect_names)
 
     async def _ensure_complete(
         self, ctx: SkillContext, content: str, chapter_title: str, word_count: int

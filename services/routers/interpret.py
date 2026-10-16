@@ -271,18 +271,29 @@ async def interpret_tender(project_id: str, db: AsyncSession = Depends(get_db)):
             select(Analysis).where(Analysis.project_id == project.id)
         )
         analysis = existing.scalar_one_or_none()
+        # 金额大小写对齐：解读模型实测把"投标保证金捌万元整"记成"（80.00元）"，
+        # 少了一万倍。大写金额是法律有效表述，以小写为准去改是错的，必须反过来。
+        try:
+            from services.generate.skills.norm_rules import fix_cn_amounts_in
+            _dims = fix_cn_amounts_in(skill_result.data.get("dimensions", {}) or {})
+            _sms = fix_cn_amounts_in(skill_result.data.get("scoring_matrix", {}) or {})
+            _secs = fix_cn_amounts_in(skill_result.data.get("sections", []) or [])
+        except Exception:
+            _dims = skill_result.data.get("dimensions", {})
+            _sms = skill_result.data.get("scoring_matrix", {})
+            _secs = skill_result.data.get("sections", [])
         if analysis:
-            analysis.dimensions = skill_result.data.get("dimensions", {})
-            analysis.scoring_matrix = skill_result.data.get("scoring_matrix", {})
+            analysis.dimensions = _dims
+            analysis.scoring_matrix = _sms
             analysis.risk_flags = skill_result.data.get("risk_flags", {})
-            analysis.sections = skill_result.data.get("sections", [])
+            analysis.sections = _secs
         else:
             analysis = Analysis(
                 project_id=project.id,
-                dimensions=skill_result.data.get("dimensions", {}),
-                scoring_matrix=skill_result.data.get("scoring_matrix", {}),
+                dimensions=_dims,
+                scoring_matrix=_sms,
                 risk_flags=skill_result.data.get("risk_flags", {}),
-                sections=skill_result.data.get("sections", []),
+                sections=_secs,
             )
             db.add(analysis)
         await db.flush()

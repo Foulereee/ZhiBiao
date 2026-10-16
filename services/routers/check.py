@@ -199,7 +199,26 @@ async def check_disqualification(project_id: str, db: AsyncSession = Depends(get
     if analysis and analysis.dimensions:
         dq_data = analysis.dimensions.get("disqualification", {})
         if dq_data and not dq_data.get("error"):
-            dq_clauses = dq_data.get("clauses", [])
+            # tender_interpret_skill 声明的字段是 disqualification_clauses，
+            # 这里原来只读 "clauses" —— 线上两个项目实测都取不到，
+            # 于是一次次退回"现场让模型重新提取废标条款"（慢且可能漏）。
+            dq_clauses = (
+                dq_data.get("disqualification_clauses")
+                or dq_data.get("clauses")
+                or []
+            )
+            # 兼容字符串形态：解读结果里 substantive_requirements /
+            # mandatory_conditions 是整段文字而非条目数组。
+            if not dq_clauses:
+                for key in ("substantive_requirements", "mandatory_conditions"):
+                    val = dq_data.get(key)
+                    if isinstance(val, str) and val.strip():
+                        dq_clauses.append({
+                            "id": f"AUTO-{key}",
+                            "type": "invalidBid",
+                            "content": val.strip(),
+                            "severity": "critical",
+                        })
 
     from services.check.skills.disqualification_check_skill import DisqualificationCheckSkill
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
@@ -8,9 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from services.database import get_db
-from services.models import Project, ProjectStatus, Document, DocumentType, User, iso_utc
+from services.models import Project, ProjectStatus, Document, DocumentType, User, Chapter, iso_utc
 from services.middleware.rbac_middleware import get_current_user, require_permission
 from services.middleware.api_key import require_any_auth
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -178,6 +181,7 @@ async def export_project_word(
     project_id: str,
     fmt: str = "docx",
     apply_format: bool = False,
+    force: bool = False,
     db: AsyncSession = Depends(get_db),
     _principal=Depends(require_any_auth),
 ):
@@ -210,6 +214,9 @@ async def export_project_word(
         # 目录默认生成:投标文件没有目录不合规范,前端「下载Word」也按有目录走
         toc=True,
         toc_levels=3,
+        # 透传强制导出开关:导出前门禁发现占位符/缺章节/生成失败章节时会返回 409，
+        # 前端需要据此弹出确认框，用户坚持要走 force=1。
+        force=force,
         db=db,
     )
 
@@ -256,17 +263,81 @@ async def update_project_status(
     return {"project_id": str(project.id), "status": project.status}
 
 
+async def _list_incomplete_chapters(db: AsyncSession, project_id: str) -> list[dict]:
+    """列出正文没写好的章节（空/过短/带生成失败标记）。
+
+    判定口径必须与前端"重新生成未加载内容（N 章）"按钮一致，否则用户看到的
+    数字和这里报的对不上。
+    """
+    from services.generate.skills.norm_rules import FAILED_CONTENT_MARKERS
+    rows = await db.execute(
+        select(Chapter.title, Chapter.content, Chapter.status, Chapter.sort_order)
+        .where(Chapter.project_id == project_id)
+        .order_by(Chapter.sort_order)
+    )
+    out: list[dict] = []
+    for title, content, status, sort_order in rows.all():
+        text = (content or "").strip()
+        bad = (
+            len(text) < 100
+            or (status or "") == "failed"
+            or any(m in text for m in FAILED_CONTENT_MARKERS)
+        )
+        if bad:
+            out.append({
+                "title": title or "",
+                "sort_order": int(sort_order or 0),
+                "chars": len(text),
+                "status": status or "",
+            })
+    return out
+
+
 @router.post("/{project_id}/gate/{stage}")
 async def confirm_gate(
     project_id: str,
     stage: str,
     reviewer: str = "user",
     current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
+    """确认某个阶段的审核闸门。
+
+    关键行为：**不因为个别章节没生成好而拒绝确认**。
+    用户明确要求"一章生成出错也要能进入下一步，并且之后能单独把那一章补回来"，
+    所以这里把不完整的章节作为提示信息返回，绝不抛错挡住流程。
+    真正会拦的是**导出**接口（export-docx）—— 那一步交出去的是要发给评委的文件，
+    有硬伤必须拦。
+
+    历史坑：GateKeeper 把闸门状态写在容器文件系统 ./projects/<id>/.stages/ 下，
+    只对单个 uvicorn worker 可见；前端"下一步"依赖本接口返回成功，一旦这里抛错
+    就永远出不来"下一步"按钮。
+    """
+    incomplete: list[dict] = []
+    if stage == "generate":
+        try:
+            incomplete = await _list_incomplete_chapters(db, project_id)
+        except Exception as e:
+            logger.warning("[闸门] 统计未生成完整章节失败: %s", e)
+
     from core.agent_engine.gate_keeper import GateKeeper
     gk = GateKeeper()
     gk.mark_passed(project_id, stage, reviewer)
-    return {"project_id": project_id, "stage": stage, "gate_passed": True}
+
+    hint = ""
+    if incomplete:
+        hint = (
+            f"有 {len(incomplete)} 章正文尚未生成完整，可点「重新生成未加载内容」补齐；"
+            "不影响进入下一步。"
+        )
+    return {
+        "project_id": project_id,
+        "stage": stage,
+        "gate_passed": True,
+        "incomplete_count": len(incomplete),
+        "incomplete_chapters": incomplete[:100],
+        "hint": hint,
+    }
 
 
 @router.delete("/{project_id}/gate/{stage}")
