@@ -18,9 +18,9 @@
 
 ## 🆕 重点改进（相对上游）
 
-**修复**：导出 Word 全链路（Markdown 渲染、封面页脚、字体归一化 `w:eastAsia` 根因）；登录稳定性（`UVICORN_WORKERS=1`）；`init_pg.sql` 循环外键 + RBAC ID 超长；`start-postgres.bat` 的 `chcp` 丢行隐患；鉴权补齐（无 token 全 401）；LLM 网关直连；`.env` 无损改写（`core/env_store.py`）。已删除死配置 `alembic.ini` + 两个零引用模块。
+**修复**：导出 Word 全链路（Markdown 渲染、封面页脚、字体归一化 `w:eastAsia` 根因）；登录稳定性（`UVICORN_WORKERS=1`）；`init_pg.sql` 循环外键 + RBAC ID 超长；`start-postgres.bat` 的 `chcp` 丢行隐患；鉴权补齐（无 token 全 401）；LLM 网关直连；`.env` 无损改写（`core/env_store.py`）。已删除死配置 `alembic.ini` + 两个零引用模块。**正文生成上下文不通顺**（编排阶段统一决策 + 全局口径台账 + 跨章一致性校验）；**导出正文残留 Markdown 标记与模板样板句**（四级标题下拉、索引样板句删除、重复维度去重）；**同一项目被重复起生成任务**（运行标记改独立心跳，慢章节不再让锁被误判过期）；**"停止批量生成"服务端收不到信号**（产物补丁回填源码）。
 
-**新增**：投标检查 AI 修复（`/fix-plan` → `/fix-locate` → `/fix-apply`，报告可导出）；按大纲顺序生成；文档输出多格式 + 目录；移动端适配；品牌在线配置；实测脚本（`tools/font_normalize_evidence.py`、`tools/optimize_images.py`）。
+**新增**：投标检查 AI 修复（`/fix-plan` → `/fix-locate` → `/fix-apply`，报告可导出）；按大纲顺序生成；文档输出多格式 + 目录；移动端适配；品牌在线配置；实测脚本（`tools/font_normalize_evidence.py`、`tools/optimize_images.py`）。**正文生成编排阶段**（`content_plan` / `writing_focus`：先定全书写法，再逐章写作）；**编排进度可视化**（SSE `plan_progress`，显示"正在编排写作计划 n/m"，不再误判卡死）；**导出前分级门禁**（生成失败 / 编造 / 缺必要章节 → 409，`force=1` 放行）；**模式化章节范围**（技术标独立成册不再要求商务章节）。
 
 > 完整差异见 [CHANGELOG.md](CHANGELOG.md)。
 
@@ -219,6 +219,10 @@ docker compose -f docker/docker-compose.yml exec api python deploy/seed_admin.py
 | 一键脚本 install.ps1 | ✅ | 独立端口 + 全新库实测；幂等复跑；stop.ps1 精确停进程 |
 | Docker | ⚠️ | `compose config` exit 0，但本机缺 WSL2 未能实机跑通；线上同套 compose 长期 HTTP 200 |
 | 图片瘦身 | ✅ | `optimize_images.py`：17 张 PNG 4.73 MB → 1.33 MB（−72%），PSNR 39–56 dB |
+| 编排进度回调 | ✅ | 生产镜像内 8/8：进度序列 `(1,3)(2,3)(3,3)`；**编排产出与改动前逐条一致**（不触碰连贯性）；子树失败仍推进进度；回调抛异常不影响编排 |
+| 生成任务防重复 | ✅ | 生产镜像内 7/7：章节未推进时运行标记仍续写 7 次（旧实现为 0 次）；`finished` 后停止且不重建标记；`_read_gen_lock` 语义未变 |
+| 前端源码构建 | ✅ | `tsc --noEmit` exit 0（含未使用变量检查）；`vite build` 2735 模块通过；线上 index/JS/CSS 全 200，`/api/health` 正常 |
+| 界面文案删除 | ✅ | 对比线上 bundle：`' 章节'` 4→2、`'约 '` 8→6、`'页'` 22→18，与删除的 4 处一一对应；`page_target` 数据与接口保留 |
 
 **已知边界**：① 登录会话在进程内 → `UVICORN_WORKERS` 必须为 1；② 无数据库迁移（无 `alembic.ini`），`create_all` 只建不改；③ 前端主 chunk 1.70 MB（依赖体积，未按路由拆包；logo 已从 2.39 MB 压到 64 KB，是独立产物不在 JS 内）；④ `/api/projects/` 需带尾斜杠（307）；⑤ `gate_keeper.py` 已接入，`orchestrator.py`（LangGraph）仍为预留。
 

@@ -75,6 +75,17 @@ x-api-env: &api-env
   # 「登录」与后续请求可能落到不同进程，表现为随机退出登录 / 401。
   # 要横向扩容请先把会话迁到 Redis。
   UVICORN_WORKERS: ${UVICORN_WORKERS:-1}
+  # ── 正文生成并发控制（services/routers/generate.py 运行时读取）──
+  # 批量生成时同时在跑的章节数。太高会触发上游限流，2~3 是实测的稳妥区间。
+  BMP_GEN_CONCURRENCY: ${BMP_GEN_CONCURRENCY:-3}
+  # 每章完成后强制间隔秒数，用来给上游留出配额余量。
+  BMP_GEN_INTERVAL: ${BMP_GEN_INTERVAL:-1.0}
+  # 无浏览器订阅者时的容忍时长（秒）。超过这个时间没有任何前端连着才主动停下，
+  # 避免"关掉网页"就白烧 LLM 配额。默认 1800s（30 分钟）足够覆盖刷新/切标签页；
+  # 无人值守的整夜批跑可临时调到 43200（12 小时）。
+  BMP_GEN_DETACH_GRACE: ${BMP_GEN_DETACH_GRACE:-1800}
+  # 单章生成时连带生成子树的节点数上限，防止误点顶层节点一次生成几百章。
+  BMP_SUBTREE_MAX: ${BMP_SUBTREE_MAX:-60}
 
 x-api-volumes: &api-volumes
   - projects:/app/projects

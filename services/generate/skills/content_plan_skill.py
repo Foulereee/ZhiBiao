@@ -205,12 +205,18 @@ async def plan_writing_focus(
     key_info: str = "",
     gateway=None,
     concurrency: int = 3,
+    on_progress=None,
 ) -> dict[str, str]:
     """执行编排阶段，返回 {节点id: writing_focus}。
 
     chapters: 大纲根数组（每个节点含 id/title/description/children）
     key_info: 全书统一口径（台账文本）—— 补上易标编排阶段缺事实的缝隙
     gateway:  LLM 网关（需有 collect_json）
+    on_progress: 可选回调 on_progress(done, total)，每完成一个一级子树调一次。
+        **必须是同步函数**（后端传的是 run.emit，本身同步）。
+        加它的原因：编排是"一次调用决定全书写法"，在 concurrency=1 时**串行**
+        跑完几十个一级子树（实测 ~30 秒/个 → 可达 30 分钟），而这段时间
+        一章正文都还没生成，前端进度条一直停在 0/N，用户会误以为"卡死了"。
 
     按一级目录切分并发编排（每个子树一次调用），**每次调用都带完整目录**，
     兼顾"全书视野"与"输出规模可控"。
@@ -226,8 +232,33 @@ async def plan_writing_focus(
         return {}
 
     sem = asyncio.Semaphore(max(1, int(concurrency)))
+    _total = len(tops)
+    _done = 0
+    _lock = asyncio.Lock()
+
+    async def _tick() -> None:
+        """完成后计数并上报。任何异常都不能影响编排本身。"""
+        nonlocal _done
+        async with _lock:
+            _done += 1
+            n = _done
+        if on_progress is None:
+            return
+        try:
+            on_progress(n, _total)
+        except Exception as e:
+            logger.warning("[正文编排] 进度回调异常（已忽略）: %s", e)
+
+    async def _one_subtree(node: dict):
+        try:
+            return await _plan_one_subtree(node, outline_text, key_info, gateway, sem)
+        finally:
+            # 即使子树失败（gather 会把异常当结果返回）也要推进进度，
+            # 否则一次失败会让进度条永远到不了末尾。
+            await _tick()
+
     results = await asyncio.gather(
-        *[_plan_one_subtree(t, outline_text, key_info, gateway, sem) for t in tops],
+        *[_one_subtree(t) for t in tops],
         return_exceptions=True,
     )
     merged: dict[str, str] = {}

@@ -2416,6 +2416,9 @@ class _BatchRun:
         self.finished_at: float | None = None
         self.error: str | None = None
         self.stopped_by_detach = False
+        # ② 独立心跳协程（见 _gen_lock_heartbeat）。运行标记不再只依赖章节边界，
+        #    慢章节（429 重试链可达数分钟）不会再让运行标记被误判为过期。
+        self.heartbeat_task = None
         # 项目被删除导致的外键失败会让整批"生成成功但存不进去"，
         # 命中即中止，用这个标记区分"中止"与"跑完"。
         self.aborted = False
@@ -2642,6 +2645,36 @@ def _clear_gen_lock(project_id: str) -> None:
             p.unlink()
     except Exception:
         pass
+
+
+async def _gen_lock_heartbeat(project_id: str, run) -> None:
+    """独立心跳：每 30 秒续写一次运行标记，与"章节边界"和"订阅者"都无关。
+
+    为什么必须有它：原来运行标记只在每章开始/结束时写（见 _batch_worker），
+    而 _read_gen_lock 以 **240 秒**为过期阈值。上游限流（429）时单章的重试链是
+    "3 次 × 20 秒 + 流式等待"，实测可以超过 240 秒 —— 这段时间运行标记看起来
+    "心跳过期、进程已死"，于是另一次点击/另一个 worker 就会走 `新建任务` 分支，
+    同一个项目出现两份并行生成（也就是"刷新页面后按钮又可点，点下去就多一个任务"）。
+    心跳改成定时续写后，只要任务真的还活着，标记就不会被误判为过期。
+
+    写之前先判 finished/task.done()：避免 worker 收尾时已 _clear_gen_lock，
+    心跳又把它重新创建出来，留下一个"看起来还活着"的假标记。
+    """
+    try:
+        while True:
+            await asyncio.sleep(30)
+            if run.finished or (getattr(run, "task", None) is not None
+                                and run.task.done()):
+                break
+            _write_gen_lock(project_id, {
+                "total": run.total,
+                "completed": run.completed,
+                "failed": run.failed,
+            })
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:  # 心跳失败绝不能影响生成
+        logger.warning("[批量生成] 运行标记心跳异常（已忽略）: %s", e)
 
 
 async def _mirror_other_run(project_id: str, lock: dict):
@@ -3340,9 +3373,18 @@ async def stream_generate_all_chapters(
                     plan_writing_focus as _plan_writing_focus,
                 )
                 _t0 = time.time()
+                # ① 编排进度上报：编排在 concurrency=1 时是串行的（几十个一级子树，
+                #    实测 ~30 秒/个，可达 30 分钟），期间一章正文都没生成，
+                #    前端进度条一直停在 0/N，用户会误判为"卡死"。
+                #    这里把已完成的子树数实时发出去，让前端显示 n/m。
                 _plans = await _plan_writing_focus(
                     chapters_list, key_info=ledger_text, gateway=gateway,
                     concurrency=_concurrency,
+                    on_progress=lambda done, tot: run.emit({
+                        "type": "plan_progress",
+                        "done": done, "total": tot,
+                        "chapter_title": f"正在编排写作计划 {done}/{tot}",
+                    }),
                 )
                 _n = _attach_plans(chapters_list, _plans)
                 logger.info(
@@ -3626,6 +3668,10 @@ async def stream_generate_all_chapters(
             _BATCH_RUNS[project_id] = run
             run.task = asyncio.create_task(_batch_worker(run))
             run.task.add_done_callback(_on_worker_done)
+            # ② 独立心跳：防止慢章节（429 重试链可达数分钟）让运行标记被误判过期，
+            #    从而导致同一项目被第二次点击新建出并行任务。
+            run.heartbeat_task = asyncio.create_task(
+                _gen_lock_heartbeat(project_id, run))
             logger.info("[批量生成] 新建任务 project_id=%s 章节=%s", project_id, total)
         else:
             logger.info("[批量生成] 接入已有任务 project_id=%s 进度=%s/%s",

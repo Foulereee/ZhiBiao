@@ -683,6 +683,15 @@ export default function GeneratePage() {
           setBatchProgress(prev => prev ? { ...prev, consistencyCheck: (data.data as Record<string, unknown> | null) ?? null } : null);
         } else if (type === 'scoring_coverage') {
           setBatchProgress(prev => prev ? { ...prev, scoringCoverage: (data.data as Record<string, unknown> | null) ?? null } : null);
+        } else if (type === 'plan_progress') {
+          // ① 编排阶段进度显示。编排是"上游一次决策"（几十个一级子树，
+          //    串行时实测 ~30 秒/个，可达 30 分钟），期间没有任何正文产出，
+          //    进度条会一直停在 0/N，用户会误判为"卡死"。
+          //    这里复用已有的 currentTitle 显示位，不改布局。
+          setBatchProgress(prev => prev ? {
+            ...prev,
+            currentTitle: `正在编排写作计划 ${data.done as number}/${data.total as number}`,
+          } : prev);
         } else if (type === 'done') {
           batchStreamRef.current?.cancel();
           loadGeneratedChapters();
@@ -704,6 +713,18 @@ export default function GeneratePage() {
       batchStreamRef.current = null;
     }
     setIsBatchStreaming(false);
+    // ★ 回填自线上产物补丁 index-Dxt6QZpi-p1.js（2026-10-16）。
+    //   原因：原来这里只 abort 了本地 fetch，服务端收不到停止信号，
+    //   只能靠"无订阅者超过宽限期"的兜底停（BMP_GEN_DETACH_GRACE），
+    //   期间会继续占用 LLM 配额。这里补一次显式通知，让服务端立即停止。
+    //   对应后端接口：services/routers/generate.py:3109 POST /{id}/content/stop
+    if (selectedProjectId) {
+      const token = localStorage.getItem('bidmaster_token') || '';
+      fetch(`/api/generate/${selectedProjectId}/content/stop`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => { /* 通知失败不影响本地状态复位 */ });
+    }
   };
 
   const loadGeneratedChapters = async () => {
@@ -1105,7 +1126,8 @@ export default function GeneratePage() {
             {STRUCTURE_TEMPLATES.map(tpl => {
               const isSelected = selectedStructureTemplates.has(tpl.key);
               const isPreviewing = previewingTemplate === tpl.key;
-              const totalPages = tpl.sections.reduce((s, sec) => s + sec.pages, 0);
+              // ③ 已按用户要求删除卡片下方的"N 章节 · 约 N 页"标注，
+              //    这里原先用于计算页数的 totalPages 随之删除（避免未使用变量）。
               return (
                 <div
                   key={tpl.key}
@@ -1161,11 +1183,6 @@ export default function GeneratePage() {
                     )}
                     <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '4px' }}>{tpl.label}</div>
                     <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', marginBottom: '6px' }}>{tpl.desc}</div>
-                    <div style={{ display: 'flex', gap: '8px', fontSize: '11px', color: '#64748b' }}>
-                      <span>{tpl.sections.length} 章节</span>
-                      <span>·</span>
-                      <span>约 {totalPages} 页</span>
-                    </div>
                   </div>
                   <div
                     onClick={(e) => { e.stopPropagation(); setPreviewingTemplate(isPreviewing ? null : tpl.key); }}
@@ -1195,7 +1212,6 @@ export default function GeneratePage() {
                         <div key={idx} style={{ padding: '6px 0', borderBottom: idx < tpl.sections.length - 1 ? '1px solid #f1f5f9' : 'none' }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <span style={{ fontSize: '12px', fontWeight: 500 }}>{sec.title}</span>
-                            <span style={{ fontSize: '10px', color: '#94a3b8', background: '#f1f5f9', padding: '1px 6px', borderRadius: '3px' }}>~{sec.pages}页</span>
                           </div>
                           <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '2px' }}>{sec.hint}</div>
                           {'children' in sec && (sec as { children?: string[] }).children && (
@@ -1279,8 +1295,8 @@ export default function GeneratePage() {
             const actualStructures = structures || ((data.data as Record<string, unknown>)?.structures as Record<string, { name: string; sections: Array<{ id: string; title: string; level: number; page_target: number; content_hint?: string }>; total_pages: number; total_sections: number }> | null);
             if (!actualStructures) return null;
             const templateNames = Object.values(actualStructures).map(s => s.name).join('、');
-            const totalPages = Object.values(actualStructures).reduce((s, v) => s + v.total_pages, 0);
-            const totalSections = Object.values(actualStructures).reduce((s, v) => s + v.total_sections, 0);
+            // ③ 已按用户要求删除该面板内所有"章节数/页数"文字（1309/1320/1331），
+            //    原先用于汇总的 totalPages / totalSections 随之删除。
             return (
               <div style={{ marginTop: '16px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
@@ -1289,7 +1305,7 @@ export default function GeneratePage() {
                       ✅ 结构模板已生成
                     </div>
                     <div style={{ fontSize: '12px', color: '#059669', marginTop: '2px' }}>
-                      已应用：{templateNames}（{totalSections} 章节，约 {totalPages} 页）
+                      已应用：{templateNames}
                     </div>
                   </div>
                   <div style={{ fontSize: '12px', color: '#059669', display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -1300,7 +1316,6 @@ export default function GeneratePage() {
                   <div key={key} style={{ marginBottom: '12px', border: '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden' }}>
                     <div style={{ padding: '10px 14px', background: '#f8fafc', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e2e8f0' }}>
                       <span style={{ fontWeight: 600, fontSize: '13px' }}>{struct.name}</span>
-                      <span style={{ fontSize: '11px', color: '#64748b' }}>{struct.total_sections} 章节 · 约 {struct.total_pages} 页</span>
                     </div>
                     <div style={{ padding: '8px 0' }}>
                       {struct.sections.map((sec, idx) => (
@@ -1311,7 +1326,6 @@ export default function GeneratePage() {
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                             {sec.content_hint && <span style={{ fontSize: '10px', color: '#94a3b8', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sec.content_hint}</span>}
-                            <span style={{ fontSize: '10px', color: '#94a3b8', background: '#f1f5f9', padding: '1px 6px', borderRadius: '3px' }}>~{sec.page_target}页</span>
                           </div>
                         </div>
                       ))}
