@@ -95,8 +95,7 @@ def _fix_outline_node(node: dict, parent_id: str = "", seq: int = 0, level: int 
     #      writing_focus 只能靠标题猜。
     # 以前这里只返回 id/title/level/children，description 被就地丢掉，加上
     # _renumber_outline 也不保留，导致全链路恒空：实测 213 章的"章节上下文"
-    # 中位只有 172 字符。对标易标：目录节点必带 description
-    # （outlineGenerationTaskV2.cjs:653「description 是目录说明」，schema 必填）。
+    # 中位只有 172 字符。目录节点必带 description（schema 必填）。
     fixed = {
         "id": node_id, "title": title, "level": node_level,
         "children": fixed_children,

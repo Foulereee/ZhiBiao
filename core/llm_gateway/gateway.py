@@ -1,6 +1,6 @@
 """LLM Gateway — 直接使用 OpenAI SDK 调用，绕过 litellm 的参数转发问题。
 
-参考 ai_bidding (requests.post) 和 OpenBidKit (fetch) 的直接调用方式，
+参考同类产品的直接调用方式（requests.post / fetch），
 改用 openai.AsyncOpenAI 客户端直接调用 OpenAI 兼容 API，
 确保 response_format、temperature、max_tokens 等参数被正确传递。
 """
@@ -286,7 +286,7 @@ class LLMGateway:
         """调用 LLM 获取 JSON 响应，带修复和校验。
 
         改进：
-        1. 增加重试机制（最多3次尝试，与 OpenBidKit 一致）
+        1. 增加重试机制（最多 3 次尝试）
         2. 每次 LLM 调用都强制 response_format=json_object
         3. 详细的日志记录
         4. 支持 max_tokens 参数控制输出长度

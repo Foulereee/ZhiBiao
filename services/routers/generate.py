@@ -103,7 +103,7 @@ def build_chapter_system_prompt(
     第一条消息起逐字相同。原实现把章节标题和目标字数写进了 system 提示词，
     于是 213 章就是 213 个不同的第一条消息，后面那一大段招标要求、设备参数、
     废标红线（合计上万字）永远无法命中缓存 —— 213 章等于 213 份全价输入。
-    对标项目（OpenBidKit）的做法正是"写作规则放 system、字数等本条请求信息
+    业界通行做法正是"写作规则放 system、字数等本条请求信息
     放 user"，并实测把输入成本降到约 1/8.6。
 
     注意：招标要求上下文是**按章节范围裁剪**过的（防设备参数串味，实测把
@@ -144,25 +144,23 @@ def build_chapter_system_prompt(
 【严禁】用 `ZL202310XXXXXX.X`、`某煤矿`、`某某公司`、`XXX`、`——` 这类伪数据填充，
 它们会被原样带进正式投标文件，属于虚假响应。"""
 
-    # ── 对标易标（OpenBidKit）原文的两条硬约束 ──
-    # ① 跨章去重，`contentGenerationAgent.cjs:86` 逐字：
+    # ── 生成提示词的两条硬约束 ──
+    # ① 跨章去重：
     #    「不为覆盖全局事实增加无关段落，也不在各节重复罗列项目概况、人员、设备或制度」
-    # ② 事实优先级链，同文件 `:81`：「材料与全局事实冲突时，以全局事实为准…
+    # ② 事实优先级链：「材料与全局事实冲突时，以全局事实为准…
     #    禁止生成没有实际依据的引用」。
     # 为什么必须写进 system：实测我这份成稿 220 章里 **27%（59/215）** 的章节
     # 开头又把项目背景复述一遍，这是"各章自说自话、上下文不通顺"最直观的形态。
-    # ── 项目基本事实（对标易标"全局事实"层）──
-    # 易标把全局事实**全量逐字**注入每一节的公共消息，且缺失就拒绝启动正文
-    # （contentGenerationAgent.cjs:403-407、contentGenerationTask.cjs:1407-1408）。
+    # ── 项目基本事实（全局事实层）──
+    # 全局事实**全量逐字**注入每一节的公共消息，且缺失就拒绝启动正文。
     # 我这边事实来自解读结果，同样全书恒定 → 放进 system，前缀缓存不受影响。
     facts_block = ""
     if project_facts_text:
         facts_block = project_facts_text
 
-    # ── 内容形态（对标易标第三层：attr(7) + content_mode(5)）──
-    # 易标按 content_mode 决定这一节的**生成任务类型**：格式表填写、人工填写、
-    # 目录页、AI 生成，各不相同（contentGenerationTask.cjs 按 content_mode 分支，
-    # 且 attr→content_mode 由 JSON-Schema if/then 强绑）。
+    # ── 内容形态（第三层：attr(7) + content_mode(5)）──
+    # 按 content_mode 决定这一节的**生成任务类型**：格式表填写、人工填写、
+    # 目录页、AI 生成，各不相同（attr→content_mode 由映射表强制推导）。
     # 我这里以前只把 attr/content_mode 标注进大纲、**正文链路从不读它**，
     # 后果是：报价章（manual-fill）被当成普通技术章写散文，模型顺手就把金额、
     # 税率、证书编号编出来 —— 正是"编造价格"这条红线最容易被踩的地方；
@@ -827,15 +825,14 @@ def build_chapter_task_block(
     """本条请求专属内容（章节标题 / 目标字数 / 结构要求）—— 追加在消息末尾。
 
     必须放在末尾：稳定内容在前、变化内容在后，前面上万字的共同上下文才能被
-    模型服务的前缀缓存命中。对标项目的规则原文是"模型服务只在消息边界复用
+    模型服务的前缀缓存命中。通行规则是"模型服务只在消息边界复用
     前缀缓存，同一条消息内的相同前缀不会命中"，并据此把写作规则放 system、
     把本条请求的字数要求放 user 消息。
 
-    writing_focus / chapter_path 来自**编排阶段**（content_plan_skill），对标易标：
-      · `chapter_path` —— 祖先标题链，让模型知道自己站在全书哪条分支上
-        （`contentGenerationAgent.cjs:144`）；
-      · `writing_focus` —— 本节写作重点与边界（`contentGenerationTask.cjs:617`），
-        易标 system 原文「本节内容范围以标题、章节描述和编排重点为准」。
+    writing_focus / chapter_path 来自**编排阶段**（content_plan_skill）：
+      · `chapter_path` —— 祖先标题链，让模型知道自己站在全书哪条分支上；
+      · `writing_focus` —— 本节写作重点与边界，system 中写明
+        「本节内容范围以标题、章节描述和编排重点为准」。
     这两个字段是"跨章不重复、边界清晰"的主要依据，也是一次全书视野决策的产物。
     """
     lo = max(MIN_CHAPTER_WORDS, int(words * 0.8))
@@ -974,7 +971,7 @@ def _content_plan_enabled() -> bool:
     """编排阶段开关（默认开启）。
 
     BMP_CONTENT_PLAN=0 可关闭。默认开启是因为它是"跨章不重复、边界清晰"的
-    主要机制（对标易标 content_plan）；但它是**额外的一次模型调用**，若某次
+    主要机制（content_plan）；但它是**额外的一次模型调用**，若某次
     生成想省成本或模型限流，可以关掉，正文链路不会因此失败。
     """
     v = (os.getenv("BMP_CONTENT_PLAN") or "1").strip().lower()
@@ -1031,7 +1028,7 @@ async def rebuild_chapter_attrs(project_id: str, db: AsyncSession = Depends(get_
     """重算并落库章节属性（attr / content_mode）。
 
     这条接口的意义：不用重新生成大纲，就能把已有标书的"这章是不是技术标"
-    变成可校验数据。对标对象（OpenBidKit）的 attr 是 AI 给初值 + 用户逐条确认
+    变成可校验数据。attr 是 AI 给初值 + 用户逐条确认
     + 程序强制推导；本接口负责"重算 + 落库 + 报告问题"，人工确认由前端/调用方
     通过传入 overrides 完成。
     """
@@ -1121,7 +1118,7 @@ def _describe_node_tree(node: dict, indent: int = 0) -> str:
 def _node_line(node: dict, indent: str = "", desc_limit: int = 80) -> str:
     """大纲节点渲染成"- id 标题 + 缩进描述"。
 
-    带 description 是刻意对齐 OpenBidKit 的做法：它给每个叶子节点传
+    带 description 是刻意的做法：给每个叶子节点传
     parent_chapters / sibling_chapters，且**每条都带 description**，
     让模型知道"同级那几节各自负责什么"从而主动避开重复。旧实现只给了
     标题，模型看不出一节和另一节的边界，车轱辘话就来了。
@@ -1630,12 +1627,9 @@ def _extract_project_facts(analysis: Analysis | None) -> dict:
 def _format_project_facts(analysis: Analysis | None, ledger_text: str = "") -> str:
     """把解读结果里的项目基本信息整理成"全书唯一事实"块。
 
-    对标易标的全局事实层：它全书**一次抽取**、**全量逐字注入每个小节的
-    user 公共消息**（`globalFactsTaskV2.cjs:16-36` schema 只有
-    `{id,title,content}`；注入点 `contentGenerationAgent.cjs:403-407`
-    「项目概述：… 全局事实设定（完整内容）：…」），并且**缺失就直接拒绝启动
-    正文生成**（`contentGenerationTask.cjs:1407-1408`「请先完成全局事实设定，
-    再生成正文」）。
+    全局事实层：全书**一次抽取**、**全量逐字注入每个小节的
+    user 公共消息**（schema 只有 `{id,title,content}`），并且**缺失就直接
+    拒绝启动正文生成**（「请先完成全局事实设定，再生成正文」）。
 
     我这里不需要再花一次模型调用：事实已经在解读结果 `analysis.dimensions`
     里，只是**从来没进过任何一章的 messages**（旧版只把 project_facts 用于
@@ -2743,7 +2737,7 @@ async def _continue_if_truncated(
     只有明确截断、或"又短又没写完"才续写，正常写短的章节不会被强行拉长。
 
     续写手法与网关内部"流式中断重试"完全一致：把已写内容作为 assistant 消息
-    回灌，再让模型接着写 —— 这也是 OpenBidKit 用的 assistant 前缀机制。
+    回灌，再让模型接着写 —— 这也是 assistant 前缀机制。
 
     流式一致性：续写**不逐块推给前端**，而是拼好、去掉重复接头之后整段推送。
     因为前端累积的正文必须与入库正文逐字一致，否则用户再点保存就把差异写回去。
@@ -2859,7 +2853,7 @@ async def _generate_one_chapter(
         scoring_context = _build_scoring_context(tree, ch_id, chapter_node)
         chapter_outline = _describe_node_tree(chapter_node) if chapter_node else ""
 
-        # ── 内容形态（易标第三层）：优先用大纲里已标注的 content_mode ──
+        # ── 内容形态（第三层）：优先用大纲里已标注的 content_mode ──
         # classify_tree 生成大纲时已原地写入并整树落库；老项目/未标注的走标题兜底。
         # 兜底很重要：报价、投标函这类章节即使没被标注，也绝不能让模型自由发挥。
         try:
@@ -2977,7 +2971,7 @@ async def _generate_one_chapter(
         if _prior:
             msgs.append({"role": "user", "content": _prior})
 
-        # 编排阶段的产物：本节写作重点 + 全书位置（对标易标 writing_focus / chapter_path）。
+        # 编排阶段的产物：本节写作重点 + 全书位置（writing_focus / chapter_path）。
         _focus = str((chapter_node or {}).get("writing_focus") or "")
         _path = ""
         try:
@@ -3270,7 +3264,7 @@ async def stream_generate_all_chapters(
         if not ledger_text:
             logger.warning("[批量生成] 无全局口径台账，正文数字一致性没有前置约束")
 
-        # ── 项目基本事实：全书恒定，注入每章 system（对标易标全局事实层）──
+        # ── 项目基本事实：全书恒定，注入每章 system（全局事实层）──
         # 旧版 project_facts 只喂给事后一致性检查与封面，**从不进正文**，
         # 于是正文里质保期出现 6 种取值、工作阻力 7 种。这里一次算好、每章共用。
         project_facts_text = ""
@@ -3345,7 +3339,7 @@ async def stream_generate_all_chapters(
                     # 按文档序分批后（_ordered_tasks），此处读到的必是文档序上
                     # 更靠前的章节，而不是"碰巧先跑完的那几章"。
                     all_contents=all_contents,
-                    # 项目基本事实（名称/编号/采购人/工期/质保期…）—— 对标易标
+                    # 项目基本事实（名称/编号/采购人/工期/质保期…）
                     # 的全局事实层，全书恒定，进 system 不破坏前缀缓存。
                     project_facts_text=project_facts_text,
                     protect_names=protect_names,
@@ -3359,10 +3353,10 @@ async def stream_generate_all_chapters(
             project_id, total, _concurrency_note, _interval, _grace,
         )
 
-        # ── 编排阶段（对标易标 content_plan）────────────────────────────
+        # ── 编排阶段（写作前全局统一决策）────────────────────────────
         # 在写正文之前，先用一次具备**全书视野**的调用决定"每节写什么、边界在哪"，
         # 产出 writing_focus 挂到大纲节点上。这是修"各章自说自话、上下文不通顺"
-        # 的主要机制：易标把"让每章互相可见"换成了"上游一次决策 + 下游致盲"。
+        # 的主要机制：把"让每章互相可见"换成了"上游一次决策 + 下游致盲"。
         # 已编排过就不重复调用（重启/续跑复用落库结果）；失败绝不阻断正文生成。
         if _content_plan_enabled() and not any(
             (n or {}).get("writing_focus") for n, _d in _iter_outline_nodes(chapters_list)

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""章节属性（attr）与内容处理模式（content_mode）—— 对标 OpenBidKit/Yibiao。
+"""章节属性（attr）与内容处理模式（content_mode）。
 
 【为什么要有这个模块】
 
@@ -10,26 +10,24 @@ commercial/service），于是出现两个无法回答的问题：
   "我选了技术标，那这份标书里到底哪些章是技术标？"
   "选了技术标，为什么商务、报价、投标函的章节还在？"
 
-对标对象（OpenBidKit / 易标）把它们拆成正交的三层：
+这三件事其实是正交的，拆成三层：
 
   ① 投标范围 bidSection —— 投哪个标段/标包，**与标类型无关**；
   ② 生成范围 outlineMode —— 完整投标文件 / 技术文件独立成册 / 商务标独立成册；
   ③ 每章属性 attr(7值) + content_mode(5值) —— **"这章到底是不是技术标"的唯一判定**，
      由 AI 给初值、用户可逐条改、**程序用映射表强制推导 content_mode**。
-     （证据：outlineGenerationTaskV2.cjs 的 OUTLINE_ATTRIBUTES / CONTENT_MODES /
-     ATTRIBUTE_CONTENT_MODE_RULES 与 JSON-Schema 的 allOf+if/then 强绑定）
 
 本模块只做 ② 的"范围断言"和 ③ 的"分类 + 强制推导"，把主观的 UI 选择变成
 可判定、可校验、可被拒绝的数据。
 
-【为什么不直接照抄它"非 ai-generate 就不让 AI 写"】
+【为什么默认不采用"非 ai-generate 就不让 AI 写"】
 
-对标项目里 `contentGenerationTask.cjs` 只跑 `content_mode=='ai-generate'` 的叶子，
+严格模式下只跑 `content_mode=='ai-generate'` 的叶子，
 报价节点因此完全不由 AI 生成。本平台的情况不同：分项报价明细表是靠
 `{待填:单价}`/`{待填:合价}` 占位符由 AI 生成表格骨架的，直接停写会**删掉已有内容**。
 按本项目的红线（宁可漏改不可错改），这里默认仍生成全部叶子，只把
 content_mode 作为分类/校验信息；确需严格模式时用环境变量
-BMP_STRICT_CONTENT_MODE=1 打开，行为才与对标项目一致。
+BMP_STRICT_CONTENT_MODE=1 打开，才改为只生成 ai-generate 叶子。
 """
 
 import os

@@ -532,7 +532,7 @@ MIN_ACCEPTABLE_CHAPTER_CHARS = 80
 # "technical"，structure_template 只有 technical 一节），它按定义**就不该**有
 # 投标函、法定代表人身份证明、开标一览表/报价表 —— 而上面的硬清单无条件要求
 # 这三项，结果技术标独立成册的项目**永远被 409 拦住**，除了强制导出没有出路。
-# 这也违背对标易标 outlineMode='standalone-technical' 的硬约束：技术标独立成册
+# 这也违背 outlineMode='standalone-technical' 的硬约束：技术标独立成册
 # 时"不得加入商务/资信、投标函、授权委托书等非技术章节"
 # （见 chapter_attrs.OUTLINE_MODE_ALLOWED_ATTRS 的同款定义）。
 _MODE_EXCLUDED_CHAPTERS: dict[str, tuple[str, ...]] = {

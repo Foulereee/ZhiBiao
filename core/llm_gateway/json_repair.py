@@ -1,4 +1,4 @@
-"""JSON 修复引擎 — 参考 OpenBidKit 的多层容错机制。
+"""JSON 修复引擎 — 多层容错机制。
 
 改进点：
 1. 增加 <think...</think 标签处理（推理模型输出）
@@ -46,7 +46,7 @@ class JsonRepairEngine:
     def _extract_balanced_json_candidates(text: str) -> list[str]:
         """从文本中通过栈匹配找到所有完整的 {...} 或 [...] 结构。
 
-        参考 OpenBidKit 的 extractBalancedJsonCandidates 实现。
+        基于栈匹配提取所有完整 {...} / [...] 结构。
         """
         candidates = []
         for open_char, close_char in [("{", "}"), ("[", "]")]:
@@ -68,7 +68,7 @@ class JsonRepairEngine:
     def _repair_invalid_escapes(text: str) -> str:
         """修复 JSON 字符串中的非法反斜杠转义。
 
-        参考 OpenBidKit 的 repairInvalidJsonStringEscapes 实现。
+        修复 JSON 字符串中的非法反斜杠转义。
         """
         # 修复 Markdown 特殊字符前的反斜杠（如 1\. -> 1.）
         text = re.sub(r"\\([.#$&*+<>?@^`|~])", r"\1", text)
@@ -84,7 +84,7 @@ class JsonRepairEngine:
     ) -> dict | list:
         """多层 JSON 修复和校验。
 
-        策略顺序（参考 OpenBidKit 的候选列表方式）：
+        策略顺序（候选列表方式）：
         1. 提取 JSON（去 think 标签、代码块）
         2. 直接解析
         3. 多种候选提取 + 修复策略

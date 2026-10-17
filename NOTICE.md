@@ -7,16 +7,9 @@
 | 项目 | 内容 |
 |---|---|
 | 上游仓库 | https://github.com/guangshu100/BidMaster-Pro |
-| 上游作者 | guangshu100（chenjinyong / cjinyong） |
+| 上游作者 | guangshu100 |
 | 上游许可 | **GNU Affero General Public License v3.0（AGPL-3.0）**，完整条款见本仓库 [LICENSE](LICENSE) |
 | 上游版权 | `Copyright (C) 智标团队 / guangshu100` |
-
-> **关于「README 写 MIT、LICENSE 却是 AGPL」的说明**
->
-> 上游 README 曾把许可证写成 “MIT”，但其仓库内 `LICENSE` 文件是 **AGPL-3.0 全文（661 行）**，
-> GitHub 对该仓库的识别结果同样是 **AGPL-3.0**。二者冲突时，**以实际授权文本 `LICENSE` 为准**，
-> 不能依据 README 里的一句话把 AGPL 代码改成 MIT 发布。
-> 因此本仓库**整体按 AGPL-3.0 发布**，未采用 MIT。
 
 ## 2. 本仓库
 

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-r"""正文编排（content_plan）阶段 —— 对标易标（OpenBidKit）的 writing_focus。
+r"""正文编排（content_plan）阶段 —— 写作前的全书统一决策（writing_focus）。
 
 ## 为什么要有这个阶段
 
@@ -10,25 +10,20 @@ r"""正文编排（content_plan）阶段 —— 对标易标（OpenBidKit）的 
   · 27%（59/215）的章节正文开头又把项目背景复述一遍；
   · 相邻章节 8-gram 重合度均值只有 0.037 —— 不是"抄"，而是**彼此没有分工**。
 
-易标（`D:\Windows\Downloads\OpenBidKit_Yibiao-main`）的做法是把"互相可见"
-换成"上游一次决策"：正文写作模型**被刻意致盲**（`contentGenerationAgent.cjs:434-441`
-的第三条 user 消息只含本节材料），连贯性由三层保证：
+这里采用的做法是把"互相可见"
+换成"上游一次决策"：正文写作模型**被刻意致盲**（写作请求只含本节材料），连贯性由三层保证：
 ① 事前全局事实；② **事中编排（本模块）**；③ 事后跨节事实核对。
 
-易标编排阶段提示词原文（`contentGenerationTask.cjs:602-623`）：
+编排阶段的提示词要求（本模块据此实现）：
 
-  :602 「你负责本次投标技术方案正文生成，现在先完成基础编排。程序会处理并保存
-        编排，再在同一会话中交给你生效结果和正文生成要求；**本阶段不要提前生成
-        正文或图片**。」
-  :613 「结合知识条目、招标文件关键信息，以及**完整目录中的上下级和同级关系**
-        进行整体判断；读取方式自行决定。」
-  :617 「4. writing_focus 用 **1-2 句话**概括本节正文重点，**不展开成正文**，
-        不编造具体参数、周期、人员、设备、品牌、型号或承诺，**并避免与相邻章节
-        重复**。」
+  · 只做编排，**本阶段不要提前生成正文或图片**；
+  · 结合知识条目、招标文件关键信息，以及**完整目录中的上下级和同级关系**进行整体判断；
+  · writing_focus 用 **1-2 句话**概括本节正文重点，**不展开成正文**，不编造具体参数、
+    周期、人员、设备、品牌、型号或承诺，**并避免与相邻章节重复**。
 
-本模块按这套要求实现，并**补上易标自身的一个缝隙**（报告 §5 指出：
-`createContentPlanningStage` 的文件清单里没有全局事实，导致 writing_focus 可能
-与事实口径脱节）—— 我们把【全书统一口径】作为编排输入，让边界划分建立在
+本模块按这套要求实现，并**补上一个已知缝隙**（编排输入清单里没有全局事实，
+会导致 writing_focus 与事实口径脱节）—— 我们把【全书统一口径】作为编排输入，
+让边界划分建立在
 已定死的事实之上。
 
 ## 编排结果怎么用
@@ -48,7 +43,7 @@ import re
 logger = logging.getLogger(__name__)
 
 # 每个一级目录子树一次调用：输出规模可控（避免一次要模型吐回 190 条），
-# 但**每次调用都带上完整目录**，保证它具备全书视野（易标 :613 的要求）。
+# 但**每次调用都带上完整目录**，保证它具备全书视野（编排要求）。
 MAX_SUBTREE_NODES = 60
 
 
@@ -86,7 +81,6 @@ def _iter_nodes(chapters: list, depth: int = 1):
 def format_outline_for_plan(chapters: list) -> str:
     """把完整目录压成紧凑文本：层级缩进 + id + 标题 + 说明。
 
-    易标对应函数 `buildContentPlanningOutline`（`contentGenerationTask.cjs:504-535`）
     对每个节点输出 id/number/title/description，叶子另带 content_mode。
     """
     lines: list[str] = []
@@ -210,7 +204,7 @@ async def plan_writing_focus(
     """执行编排阶段，返回 {节点id: writing_focus}。
 
     chapters: 大纲根数组（每个节点含 id/title/description/children）
-    key_info: 全书统一口径（台账文本）—— 补上易标编排阶段缺事实的缝隙
+    key_info: 全书统一口径（台账文本）—— 补上编排阶段缺事实的缝隙
     gateway:  LLM 网关（需有 collect_json）
     on_progress: 可选回调 on_progress(done, total)，每完成一个一级子树调一次。
         **必须是同步函数**（后端传的是 run.emit，本身同步）。
@@ -287,7 +281,7 @@ def attach_plans(chapters: list, plans: dict[str, str]) -> int:
 
 
 def node_path(chapters: list, target_id: str) -> str:
-    """祖先标题链（对标易标 `chapter_path`，`contentGenerationAgent.cjs:144`）。
+    """祖先标题链（chapter_path）。
 
     「父 > 子 > 本节」这样一个极短字符串就能让模型知道自己站在全书的哪条分支上，
     成本几乎为零，但对层级一致、术语一致收益很大。
